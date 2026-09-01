@@ -10,6 +10,8 @@ from pathlib import Path
 from .analyzer import analyze_path
 from .benchmark import BenchmarkError, run_benchmark
 from .experiments import run_experiment, save_record
+from .optimizer import optimize
+from .providers import CommandProvider, ProviderError
 from .repository import RepositoryError
 from .verification import compare, run_correctness
 
@@ -54,6 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--rounds", type=int, default=7)
     experiment.add_argument("--minimum-improvement", type=float, default=5.0)
     experiment.add_argument("--output", type=Path, default=Path(".perf-engineer/experiments"))
+
+    optimize_parser = subparsers.add_parser(
+        "optimize", help="generate, verify, and rank AI optimization candidates"
+    )
+    optimize_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    optimize_parser.add_argument("--baseline-ref", default="HEAD")
+    optimize_parser.add_argument("--provider-command", type=_command, required=True)
+    optimize_parser.add_argument("--benchmark", type=_command, required=True)
+    optimize_parser.add_argument("--test", type=_command, required=True)
+    optimize_parser.add_argument("--rounds", type=int, default=7)
+    optimize_parser.add_argument("--maximum-candidates", type=int, default=3)
+    optimize_parser.add_argument("--minimum-improvement", type=float, default=5.0)
     return parser
 
 
@@ -94,6 +108,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2))
             return 0 if record.result.decision == "accept" else 2
 
+        if args.action == "optimize":
+            optimization = optimize(
+                repository=args.repository,
+                baseline_ref=args.baseline_ref,
+                provider=CommandProvider(args.provider_command),
+                benchmark_command=args.benchmark,
+                test_command=args.test,
+                rounds=args.rounds,
+                maximum_candidates=args.maximum_candidates,
+                minimum_improvement_percent=args.minimum_improvement,
+            )
+            print(json.dumps(optimization.to_dict(), indent=2))
+            return 0 if optimization.winner_id else 2
+
         correctness = run_correctness(args.test, cwd=args.candidate)
         baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
         candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
@@ -105,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(verification_result.to_dict(), indent=2))
         return 0 if verification_result.decision == "accept" else 2
-    except (BenchmarkError, RepositoryError, OSError, ValueError) as exc:
+    except (BenchmarkError, ProviderError, RepositoryError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

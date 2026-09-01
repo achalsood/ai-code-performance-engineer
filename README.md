@@ -14,6 +14,8 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Machine-readable JSON reports and CI across Python 3.11–3.13
 - Isolated Git worktrees and durable, versioned experiment records
 - Wall-clock, CPU-time, and peak-memory measurements
+- Provider-independent AI candidate generation with strict JSON contracts
+- Safe unified-diff validation and measured multi-candidate ranking
 
 ## Quick start
 
@@ -40,6 +42,22 @@ perf-engineer experiment \
 The tool checks out both revisions into temporary detached worktrees, runs the correctness and
 measurement gates, writes a versioned record under `.perf-engineer/experiments`, and cleans up
 the worktrees even after a failure.
+
+Generate and evaluate AI proposals through any command that accepts an `OptimizationRequest`
+as JSON on stdin and returns `{\"candidates\": [...]}` on stdout:
+
+```bash
+perf-engineer optimize \
+  --repository . \
+  --provider-command "python integrations/my_agent.py" \
+  --benchmark "python benchmark.py" \
+  --test "python -m pytest" \
+  --maximum-candidates 3
+```
+
+Candidate patches cannot create, delete, rename, or modify non-Python files. Each valid patch is
+applied in a disposable worktree, tested, benchmarked, and ranked. Model confidence never affects
+the acceptance decision.
 
 Compare the same workload in two separate worktrees:
 
@@ -95,6 +113,6 @@ pytest
 
 - **M1 — Measurement core:** static analysis, benchmark runner, verification gate (current)
 - **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent records (current)
-- **M3 — AI optimization:** structured candidate generation and multi-candidate ranking
+- **M3 — AI optimization:** structured candidate generation and multi-candidate ranking (current)
 - **M4 — Hardening:** container isolation, quotas, audit logs, property-based correctness checks
 - **M5 — Evaluation:** reproducible optimization corpus and public effectiveness metrics
