@@ -1,0 +1,84 @@
+# AI Code Performance Engineer
+
+An evidence-driven developer tool that finds performance risks, measures candidate changes,
+checks correctness, and accepts an optimization only when the data supports it.
+
+The central rule is simple: **AI may propose a patch; measurement decides whether it ships.**
+
+## What works today
+
+- Python AST analysis for nested loops, repeated linear scans, and loop-local allocations
+- Isolated command benchmarks with warmups, timeouts, deterministic hash seeds, and raw samples
+- Median/variance-based comparison instead of trusting a single timing
+- Correctness gate that rejects fast but broken candidates
+- Machine-readable JSON reports and CI across Python 3.11–3.13
+
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+
+perf-engineer analyze src
+perf-engineer benchmark "python examples/workload.py" --rounds 9
+```
+
+Compare the same workload in two separate worktrees:
+
+```bash
+perf-engineer verify \
+  --baseline /tmp/project-before \
+  --candidate /tmp/project-after \
+  --benchmark "python benchmark.py" \
+  --test "python -m pytest" \
+  --minimum-improvement 5
+```
+
+The command exits `0` only for an accepted candidate, `2` for a rejected or inconclusive
+candidate, and `1` for an execution error. This makes the verdict usable in CI.
+
+## Architecture
+
+```text
+Repository -> Static analysis -> Candidate patch -> Correctness gate
+                                      |                  |
+                                      +-> Benchmark -----+
+                                               |
+                                        Accept / Reject
+```
+
+The current release establishes the deterministic core. Planned layers are repository
+worktree orchestration, profiler adapters, an optional LLM candidate provider, sandboxed
+containers, ranked multi-candidate search, and a historical evaluation dataset.
+
+## Engineering principles
+
+1. Never treat model output as proof.
+2. Preserve behavior before optimizing it.
+3. Store raw measurements, not just summaries.
+4. Reject noisy experiments instead of overstating results.
+5. Keep provider-specific AI behind interfaces so the engine remains testable offline.
+
+## Security note
+
+Benchmark and test commands execute local code. Only run the tool against repositories you
+trust. Container isolation and resource quotas are part of the next milestone.
+
+## Development
+
+```bash
+python -m pip install -e '.[dev]'
+ruff check .
+mypy src
+pytest
+```
+
+## Roadmap
+
+- **M1 — Measurement core:** static analysis, benchmark runner, verification gate (current)
+- **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent experiment records
+- **M3 — AI optimization:** structured candidate generation and multi-candidate ranking
+- **M4 — Hardening:** container isolation, quotas, audit logs, property-based correctness checks
+- **M5 — Evaluation:** reproducible optimization corpus and public effectiveness metrics
+
