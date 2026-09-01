@@ -11,7 +11,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 
 ## What works today
 
-- Python AST analysis for nested loops, repeated linear scans, and loop-local allocations
+- Python, JavaScript, and TypeScript AST analysis for common performance risks
 - Isolated command benchmarks with warmups, timeouts, deterministic hash seeds, and raw samples
 - Median/variance-based comparison instead of trusting a single timing
 - Correctness gate that rejects fast but broken candidates
@@ -22,6 +22,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Safe unified-diff validation and measured multi-candidate ranking
 - Resource-limited execution, optional network-disabled Docker isolation, and hash-chained audits
 - Reproducible benchmark corpus, confidence intervals, history, and regression reports
+- Python, JavaScript, and TypeScript AST analysis plus normalized profiler adapters
 
 ## Quick start
 
@@ -77,6 +78,8 @@ perf-engineer optimize \
 The container runs with networking disabled, a read-only filesystem, all Linux capabilities
 dropped, process and memory quotas, and `no-new-privileges`. Local execution also sanitizes the
 environment, applies OS resource limits, and kills the entire process group on timeout.
+Local memory enforcement monitors physical resident memory, allowing V8 and other runtimes to
+reserve virtual address space without being mistaken for actual memory consumption.
 
 Run the checked-in evaluation corpus and generate a report:
 
@@ -88,8 +91,15 @@ perf-engineer evaluate \
   --report .perf-engineer/report.md
 ```
 
-The report includes correctness and acceptance rates, median speedup, a deterministic 95%
+The mixed Python/JavaScript report includes correctness and acceptance rates, median speedup, a deterministic 95%
 bootstrap confidence interval, per-case outcomes, and regressions against the previous run.
+
+Collect a portable resource profile or Python function-level hotspots:
+
+```bash
+perf-engineer profile "python workload.py" --adapter resource
+perf-engineer profile "python workload.py" --adapter cprofile --output profile.json
+```
 
 Candidate patches cannot create, delete, rename, or modify non-Python files. Each valid patch is
 applied in a disposable worktree, tested, benchmarked, and ranked. Model confidence never affects

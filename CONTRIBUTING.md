@@ -10,6 +10,8 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
+Node.js 22 or newer is required to run the complete mixed-language corpus.
+
 Before opening a pull request, run:
 
 ```bash

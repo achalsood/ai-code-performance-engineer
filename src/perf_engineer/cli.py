@@ -15,6 +15,7 @@ from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
 from .history import append_run, detect_regressions, read_runs
 from .optimizer import export_winning_patch, optimize, save_optimization
+from .profiling import CProfileAdapter, ProfilingError, ResourceProfiler
 from .providers import (
     CandidateProvider,
     CommandProvider,
@@ -103,6 +104,14 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--history", type=Path, default=Path(".perf-engineer/history.jsonl"))
     evaluate.add_argument("--report", type=Path, default=Path(".perf-engineer/report.md"))
     evaluate.add_argument("--regression-tolerance", type=float, default=5.0)
+
+    profile = subparsers.add_parser("profile", help="collect normalized performance profiles")
+    profile.add_argument("command", type=_command)
+    profile.add_argument("--cwd", type=Path, default=Path.cwd())
+    profile.add_argument("--adapter", choices=("resource", "cprofile"), default="resource")
+    profile.add_argument("--timeout", type=float, default=30.0)
+    profile.add_argument("--memory-mb", type=int, default=1024)
+    profile.add_argument("--output", type=Path)
     return parser
 
 
@@ -126,6 +135,23 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
             )
             print(json.dumps(asdict(benchmark_result), indent=2))
+            return 0
+
+        if args.action == "profile":
+            profiler = CProfileAdapter() if args.adapter == "cprofile" else ResourceProfiler()
+            profile_result = profiler.profile(
+                args.command,
+                cwd=args.cwd,
+                policy=ExecutionPolicy(
+                    timeout_seconds=args.timeout,
+                    memory_bytes=args.memory_mb * 1024 * 1024,
+                ),
+            )
+            serialized = json.dumps(profile_result.to_dict(), indent=2)
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(serialized + "\n", encoding="utf-8")
+            print(serialized)
             return 0
 
         if args.action == "experiment":
@@ -224,7 +250,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(verification_result.to_dict(), indent=2))
         return 0 if verification_result.decision == "accept" else 2
-    except (BenchmarkError, ProviderError, RepositoryError, OSError, ValueError) as exc:
+    except (
+        BenchmarkError,
+        ProfilingError,
+        ProviderError,
+        RepositoryError,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

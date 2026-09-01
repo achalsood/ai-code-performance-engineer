@@ -10,7 +10,7 @@ class PatchValidationError(ValueError):
 
 
 DIFF_HEADER = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.MULTILINE)
-ALLOWED_SUFFIXES = {".py"}
+ALLOWED_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 
 
 def validate_patch(patch: str, *, maximum_bytes: int = 100_000) -> tuple[str, ...]:

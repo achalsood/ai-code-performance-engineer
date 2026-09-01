@@ -75,10 +75,12 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
 def _request(repository: Path, worktree: Path, maximum_candidates: int) -> OptimizationRequest:
     raw_findings = tuple(analyze_path(worktree))
     finding_paths = {Path(item.path) for item in raw_findings}
+    supported_suffixes = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
     fallback_paths = (
         path
-        for path in sorted(worktree.rglob("*.py"))
-        if ".git" not in path.parts and "__pycache__" not in path.parts
+        for path in sorted(worktree.rglob("*"))
+        if path.suffix in supported_suffixes
+        and not {".git", "node_modules", "__pycache__"}.intersection(path.parts)
     )
     relevant_paths = list(sorted(finding_paths))
     relevant_paths.extend(path for path in fallback_paths if path not in finding_paths)
@@ -96,9 +98,21 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         replace(item, path=Path(item.path).relative_to(worktree).as_posix())
         for item in raw_findings
     )
+    language_names = {
+        "py": "python",
+        "js": "javascript",
+        "jsx": "javascript",
+        "mjs": "javascript",
+        "cjs": "javascript",
+        "ts": "typescript",
+        "tsx": "typescript",
+    }
+    detected_languages = {
+        language_names[Path(path).suffix.lstrip(".")] for path in files
+    }
     return OptimizationRequest(
         objective="Improve runtime or memory use without changing observable behavior.",
-        language="python",
+        language=", ".join(sorted(detected_languages)),
         findings=findings,
         files=files,
         maximum_candidates=maximum_candidates,

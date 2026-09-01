@@ -1,5 +1,5 @@
 {
-  "suite_name": "Python optimization corpus",
+  "suite_name": "Python and JavaScript optimization corpus",
   "cases": [
     {
       "case_id": "membership-index",
@@ -17,6 +17,15 @@
       "candidate_directory": "hoisted-sort/candidate",
       "benchmark_command": ["python", "workload.py"],
       "test_command": ["python", "test_correctness.py"],
+      "minimum_improvement_percent": 5.0
+    },
+    {
+      "case_id": "javascript-membership-index",
+      "description": "Replace repeated JavaScript Array.includes scans with a Set index.",
+      "baseline_directory": "javascript-membership-index/baseline",
+      "candidate_directory": "javascript-membership-index/candidate",
+      "benchmark_command": ["node", "workload.js"],
+      "test_command": ["node", "test_correctness.js"],
       "minimum_improvement_percent": 5.0
     }
   ]

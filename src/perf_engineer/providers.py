@@ -78,7 +78,8 @@ def _system_prompt(maximum_candidates: int) -> str:
     return (
         "You are a code performance engineer. Return only JSON with a candidates array. "
         "Each candidate requires candidate_id, title, rationale, and a unified diff in patch. "
-        "Preserve observable behavior, modify only existing Python files, and produce at most "
+        "Preserve observable behavior, modify only existing supported source files, and "
+        "produce at most "
         f"{maximum_candidates} independent candidates. Do not use markdown fences."
     )
 

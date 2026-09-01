@@ -19,5 +19,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bootstrap confidence gates that require the lower 95% bound to clear the threshold.
 - Persisted optimization records and safe export of winning patches for human review.
 - Bounded fallback source context when static analysis produces no findings.
+- Tree-sitter-based JavaScript and TypeScript performance analysis.
+- Normalized resource and Python cProfile adapters with ranked hotspots.
+- Mixed Python/JavaScript evaluation corpus and Node.js CI coverage.
+- Per-process physical-memory monitoring compatible with V8 virtual heap reservation.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0

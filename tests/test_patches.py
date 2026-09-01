@@ -18,6 +18,11 @@ def test_accepts_safe_python_patch() -> None:
     assert validate_patch(VALID_PATCH) == ("example.py",)
 
 
+def test_accepts_safe_typescript_patch() -> None:
+    patch = VALID_PATCH.replace("example.py", "example.ts")
+    assert validate_patch(patch) == ("example.ts",)
+
+
 @pytest.mark.parametrize(
     "header",
     [

@@ -14,8 +14,8 @@ class FixedProvider:
 +++ b/workload.py
 @@ -1,2 +1,2 @@
  import time
--time.sleep(0.04)
-+time.sleep(0.001)
+-time.sleep(0.10)
++time.sleep(0.01)
 """
         return [OptimizationCandidate("fast", "Reduce wait", "Removes idle time", patch)]
 
@@ -29,7 +29,7 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "-C", str(repository), "config", "user.name", "Test"], check=True
     )
-    (repository / "workload.py").write_text("import time\ntime.sleep(0.04)\n")
+    (repository / "workload.py").write_text("import time\ntime.sleep(0.10)\n")
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
 
@@ -47,7 +47,7 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
     record = save_optimization(result, tmp_path / "records")
     patch = export_winning_patch(result, tmp_path / "winner.patch")
     assert record.exists()
-    assert patch and "time.sleep(0.001)" in patch.read_text()
+    assert patch and "time.sleep(0.01)" in patch.read_text()
     worktrees = subprocess.check_output(
         ["git", "-C", str(repository), "worktree", "list", "--porcelain"], text=True
     )

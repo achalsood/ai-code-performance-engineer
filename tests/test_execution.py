@@ -24,3 +24,16 @@ def test_runner_enforces_wall_timeout(tmp_path: Path) -> None:
             cwd=tmp_path,
             policy=ExecutionPolicy(timeout_seconds=0.05),
         )
+
+
+def test_runner_reports_per_process_memory(tmp_path: Path) -> None:
+    result = LocalProcessRunner().run(
+        [
+            sys.executable,
+            "-c",
+            "import time; data = bytearray(8_000_000); time.sleep(0.05)",
+        ],
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    )
+    assert result.peak_memory_bytes >= 8_000_000

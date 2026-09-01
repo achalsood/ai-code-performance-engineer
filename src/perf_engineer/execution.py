@@ -62,7 +62,6 @@ def sanitized_environment() -> dict[str, str]:
 
 def _apply_limits(policy: ExecutionPolicy) -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds))
-    resource.setrlimit(resource.RLIMIT_AS, (policy.memory_bytes, policy.memory_bytes))
     resource.setrlimit(resource.RLIMIT_NPROC, (policy.maximum_processes, policy.maximum_processes))
     resource.setrlimit(
         resource.RLIMIT_FSIZE, (policy.maximum_file_bytes, policy.maximum_file_bytes)
@@ -70,11 +69,20 @@ def _apply_limits(policy: ExecutionPolicy) -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
+def _resident_memory_bytes(process_id: int) -> int:
+    try:
+        for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return 0
+    return 0
+
+
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
 
     def run(self, command: list[str], *, cwd: Path, policy: ExecutionPolicy) -> ExecutionResult:
-        usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
         started = time.perf_counter()
         with tempfile.TemporaryFile() as errors:
             process = subprocess.Popen(
@@ -87,22 +95,40 @@ class LocalProcessRunner:
                 start_new_session=True,
                 preexec_fn=lambda: _apply_limits(policy),
             )
-            try:
-                returncode = process.wait(timeout=policy.timeout_seconds)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                message = f"command timed out after {policy.timeout_seconds:g}s"
-                raise ExecutionError(message) from None
+            deadline = started + policy.timeout_seconds
+            peak_memory_bytes = 0
+            while True:
+                peak_memory_bytes = max(peak_memory_bytes, _resident_memory_bytes(process.pid))
+                if peak_memory_bytes > policy.memory_bytes:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    _, status, _ = os.wait4(process.pid, 0)
+                    process.returncode = os.waitstatus_to_exitcode(status)
+                    raise ExecutionError(
+                        f"command exceeded memory limit of {policy.memory_bytes} bytes"
+                    )
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    _, status, _ = os.wait4(process.pid, 0)
+                    process.returncode = os.waitstatus_to_exitcode(status)
+                    message = f"command timed out after {policy.timeout_seconds:g}s"
+                    raise ExecutionError(message)
+                waited_pid, status, child_usage = os.wait4(process.pid, os.WNOHANG)
+                if waited_pid:
+                    returncode = os.waitstatus_to_exitcode(status)
+                    process.returncode = returncode
+                    peak_memory_bytes = max(
+                        peak_memory_bytes, int(child_usage.ru_maxrss * 1024)
+                    )
+                    break
+                time.sleep(min(0.005, remaining))
             errors.seek(0)
             stderr = errors.read().decode("utf-8", errors="replace")[-1000:]
-        usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
         return ExecutionResult(
             returncode=returncode,
             wall_seconds=time.perf_counter() - started,
-            cpu_seconds=(usage_after.ru_utime - usage_before.ru_utime)
-            + (usage_after.ru_stime - usage_before.ru_stime),
-            peak_memory_bytes=int(usage_after.ru_maxrss * 1024),
+            cpu_seconds=child_usage.ru_utime + child_usage.ru_stime,
+            peak_memory_bytes=peak_memory_bytes,
             stderr=stderr,
         )
 
