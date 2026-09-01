@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
@@ -69,3 +72,133 @@ class CommandProvider:
         if len({candidate.candidate_id for candidate in candidates}) != len(candidates):
             raise ProviderError("provider returned duplicate candidate IDs")
         return candidates
+
+
+def _system_prompt(maximum_candidates: int) -> str:
+    return (
+        "You are a code performance engineer. Return only JSON with a candidates array. "
+        "Each candidate requires candidate_id, title, rationale, and a unified diff in patch. "
+        "Preserve observable behavior, modify only existing Python files, and produce at most "
+        f"{maximum_candidates} independent candidates. Do not use markdown fences."
+    )
+
+
+def _decode_candidates(payload: object, maximum_candidates: int) -> list[OptimizationCandidate]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
+        raise ProviderError("provider response must contain a candidates array")
+    try:
+        candidates = [OptimizationCandidate(**item) for item in payload["candidates"]]
+    except TypeError as exc:
+        raise ProviderError("provider returned an invalid candidate") from exc
+    if len(candidates) > maximum_candidates:
+        raise ProviderError("provider returned more candidates than requested")
+    if len({item.candidate_id for item in candidates}) != len(candidates):
+        raise ProviderError("provider returned duplicate candidate IDs")
+    return candidates
+
+
+class OpenAICompatibleProvider:
+    """Built-in adapter for OpenAI and servers implementing the Chat Completions API."""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str = "https://api.openai.com/v1",
+        api_key: str | None = None,
+        timeout: float = 180.0,
+    ) -> None:
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.timeout = timeout
+        if not self.api_key:
+            raise ProviderError("OPENAI_API_KEY is required for the OpenAI provider")
+
+    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+        body = {
+            "model": self.model,
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": _system_prompt(request.maximum_candidates)},
+                {"role": "user", "content": json.dumps(asdict(request), separators=(",", ":"))},
+            ],
+        }
+        response = _post_json(
+            f"{self.base_url}/chat/completions",
+            body,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=self.timeout,
+        )
+        try:
+            choices = response["choices"]
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise TypeError
+            message = choices[0]["message"]
+            if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+                raise TypeError
+            content = message["content"]
+            payload = json.loads(content)
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise ProviderError("OpenAI-compatible provider returned invalid JSON") from exc
+        return _decode_candidates(payload, request.maximum_candidates)
+
+
+class OllamaProvider:
+    """Built-in adapter for a local Ollama server."""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str = "http://127.0.0.1:11434",
+        timeout: float = 180.0,
+    ) -> None:
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+        body = {
+            "model": self.model,
+            "stream": False,
+            "format": "json",
+            "messages": [
+                {"role": "system", "content": _system_prompt(request.maximum_candidates)},
+                {"role": "user", "content": json.dumps(asdict(request), separators=(",", ":"))},
+            ],
+            "options": {"temperature": 0.2},
+        }
+        response = _post_json(f"{self.base_url}/api/chat", body, timeout=self.timeout)
+        try:
+            message = response["message"]
+            if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+                raise TypeError
+            payload = json.loads(message["content"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ProviderError("Ollama returned invalid JSON") from exc
+        return _decode_candidates(payload, request.maximum_candidates)
+
+
+def _post_json(
+    url: str,
+    body: dict[str, object],
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: float,
+) -> dict[str, object]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body, separators=(",", ":")).encode(),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ProviderError(f"provider request failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ProviderError("provider returned a non-object response")
+    return payload

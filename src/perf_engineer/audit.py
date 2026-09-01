@@ -19,9 +19,7 @@ class AuditLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a+", encoding="utf-8") as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
-            stream.seek(0)
-            lines = [line for line in stream if line.strip()]
-            previous_hash = json.loads(lines[-1])["hash"] if lines else "0" * 64
+            previous_hash = self._last_hash(stream)
             body = {
                 "timestamp": datetime.now(UTC).isoformat(),
                 "event": event,
@@ -36,6 +34,25 @@ class AuditLogger:
             stream.flush()
             os.fsync(stream.fileno())
             return digest
+
+    @staticmethod
+    def _last_hash(stream: Any) -> str:
+        stream.seek(0, os.SEEK_END)
+        end = stream.tell()
+        if end == 0:
+            return "0" * 64
+        position = end - 1
+        while position > 0:
+            stream.seek(position)
+            if stream.read(1) == "\n" and position < end - 1:
+                break
+            position -= 1
+        stream.seek(position + 1 if position else 0)
+        line = stream.readline().strip()
+        digest = json.loads(line)["hash"]
+        if not isinstance(digest, str):
+            raise ValueError("invalid audit hash")
+        return digest
 
     def verify(self) -> bool:
         previous_hash = "0" * 64

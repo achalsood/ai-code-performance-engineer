@@ -15,7 +15,13 @@ from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
 from .history import append_run, detect_regressions, read_runs
 from .optimizer import optimize
-from .providers import CommandProvider, ProviderError
+from .providers import (
+    CandidateProvider,
+    CommandProvider,
+    OllamaProvider,
+    OpenAICompatibleProvider,
+    ProviderError,
+)
 from .reporting import markdown_report
 from .repository import RepositoryError
 from .verification import compare, run_correctness
@@ -67,7 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     optimize_parser.add_argument("--repository", type=Path, default=Path.cwd())
     optimize_parser.add_argument("--baseline-ref", default="HEAD")
-    optimize_parser.add_argument("--provider-command", type=_command, required=True)
+    provider_group = optimize_parser.add_mutually_exclusive_group(required=True)
+    provider_group.add_argument("--provider-command", type=_command)
+    provider_group.add_argument("--provider", choices=("openai", "ollama"))
+    optimize_parser.add_argument("--model")
+    optimize_parser.add_argument("--provider-base-url")
     optimize_parser.add_argument("--benchmark", type=_command, required=True)
     optimize_parser.add_argument("--test", type=_command, required=True)
     optimize_parser.add_argument("--rounds", type=int, default=7)
@@ -136,10 +146,25 @@ def main(argv: list[str] | None = None) -> int:
             policy = ExecutionPolicy(
                 timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
             )
+            provider: CandidateProvider
+            if args.provider_command:
+                provider = CommandProvider(args.provider_command)
+            elif not args.model:
+                raise ValueError("--model is required with a built-in provider")
+            elif args.provider == "openai":
+                provider = OpenAICompatibleProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "https://api.openai.com/v1",
+                )
+            else:
+                provider = OllamaProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
+                )
             optimization = optimize(
                 repository=args.repository,
                 baseline_ref=args.baseline_ref,
-                provider=CommandProvider(args.provider_command),
+                provider=provider,
                 benchmark_command=args.benchmark,
                 test_command=args.test,
                 rounds=args.rounds,

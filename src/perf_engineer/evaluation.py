@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .benchmark import run_benchmark
+from .benchmark import run_paired_benchmarks
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import Decision, VerificationResult
 from .verification import compare, run_correctness
@@ -126,16 +126,10 @@ def evaluate_corpus(
             runner=selected_runner,
             policy=selected_policy,
         )
-        baseline = run_benchmark(
+        baseline, candidate = run_paired_benchmarks(
             list(case.benchmark_command),
-            cwd=baseline_directory,
-            rounds=rounds,
-            runner=selected_runner,
-            policy=selected_policy,
-        )
-        candidate = run_benchmark(
-            list(case.benchmark_command),
-            cwd=candidate_directory,
+            baseline_cwd=baseline_directory,
+            candidate_cwd=candidate_directory,
             rounds=rounds,
             runner=selected_runner,
             policy=selected_policy,

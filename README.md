@@ -1,5 +1,9 @@
 # AI Code Performance Engineer
 
+[![CI](https://github.com/achalsood/ai-code-performance-engineer/actions/workflows/ci.yml/badge.svg)](https://github.com/achalsood/ai-code-performance-engineer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/achalsood/ai-code-performance-engineer)](https://github.com/achalsood/ai-code-performance-engineer/releases)
+[![Python](https://img.shields.io/badge/python-3.11--3.13-blue)](https://www.python.org/)
+
 An evidence-driven developer tool that finds performance risks, measures candidate changes,
 checks correctness, and accepts an optimization only when the data supports it.
 
@@ -91,6 +95,23 @@ Candidate patches cannot create, delete, rename, or modify non-Python files. Eac
 applied in a disposable worktree, tested, benchmarked, and ranked. Model confidence never affects
 the acceptance decision.
 
+Built-in providers are also available:
+
+```bash
+# OpenAI or an OpenAI-compatible endpoint
+OPENAI_API_KEY=... perf-engineer optimize \
+  --repository . --provider openai --model YOUR_MODEL \
+  --benchmark "python benchmark.py" --test "python -m pytest"
+
+# Local Ollama
+perf-engineer optimize \
+  --repository . --provider ollama --model qwen2.5-coder \
+  --benchmark "python benchmark.py" --test "python -m pytest"
+```
+
+Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
+appends read only the final hash-chain record, keeping logging constant-time as histories grow.
+
 Compare the same workload in two separate worktrees:
 
 ```bash
@@ -148,3 +169,8 @@ pytest
 - **M3 — AI optimization:** structured candidate generation and multi-candidate ranking (current)
 - **M4 — Hardening:** container isolation, quotas, audit logs, property checks (current)
 - **M5 — Evaluation:** reproducible corpus, effectiveness metrics, regression reports (current)
+
+## Release status
+
+Version 1.0.0 implements the complete evidence-driven optimization pipeline. See
+[CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

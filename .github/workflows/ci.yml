@@ -26,3 +26,26 @@ jobs:
       - run: mypy src
       - run: pytest
 
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - name: Run optimization corpus
+        run: |
+          mkdir -p artifacts
+          perf-engineer evaluate \
+            --corpus benchmarks/corpus.json \
+            --rounds 9 \
+            --history artifacts/history.jsonl \
+            --report artifacts/evaluation-report.md \
+            > artifacts/evaluation.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-evaluation
+          path: artifacts/
+          retention-days: 30

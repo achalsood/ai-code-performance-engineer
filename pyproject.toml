@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-code-performance-engineer"
-version = "0.1.0"
+version = "1.0.0"
 description = "Evidence-driven code optimization: analyze, benchmark, verify, and accept only proven improvements."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "hypothesis>=6.100"]
+release = ["build>=1.2", "twine>=5.1"]
 
 [project.scripts]
 perf-engineer = "perf_engineer.cli:main"
