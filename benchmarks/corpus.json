@@ -1,0 +1,23 @@
+{
+  "suite_name": "Python optimization corpus",
+  "cases": [
+    {
+      "case_id": "membership-index",
+      "description": "Replace repeated linear membership scans with a set index.",
+      "baseline_directory": "membership-index/baseline",
+      "candidate_directory": "membership-index/candidate",
+      "benchmark_command": ["python", "workload.py"],
+      "test_command": ["python", "test_correctness.py"],
+      "minimum_improvement_percent": 5.0
+    },
+    {
+      "case_id": "hoisted-sort",
+      "description": "Hoist an invariant sort outside a hot loop.",
+      "baseline_directory": "hoisted-sort/baseline",
+      "candidate_directory": "hoisted-sort/candidate",
+      "benchmark_command": ["python", "workload.py"],
+      "test_command": ["python", "test_correctness.py"],
+      "minimum_improvement_percent": 5.0
+    }
+  ]
+}

@@ -10,10 +10,13 @@ from pathlib import Path
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_benchmark
+from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
+from .history import append_run, detect_regressions, read_runs
 from .optimizer import optimize
 from .providers import CommandProvider, ProviderError
+from .reporting import markdown_report
 from .repository import RepositoryError
 from .verification import compare, run_correctness
 
@@ -77,6 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument(
         "--audit-log", type=Path, default=Path(".perf-engineer/audit.jsonl")
     )
+
+    evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
+    evaluate.add_argument("--corpus", type=Path, required=True)
+    evaluate.add_argument("--rounds", type=int, default=7)
+    evaluate.add_argument("--history", type=Path, default=Path(".perf-engineer/history.jsonl"))
+    evaluate.add_argument("--report", type=Path, default=Path(".perf-engineer/report.md"))
+    evaluate.add_argument("--regression-tolerance", type=float, default=5.0)
     return parser
 
 
@@ -141,6 +151,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(optimization.to_dict(), indent=2))
             return 0 if optimization.winner_id else 2
+
+        if args.action == "evaluate":
+            previous_runs = read_runs(args.history)
+            evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
+            regressions = (
+                detect_regressions(
+                    previous_runs[-1],
+                    evaluation,
+                    tolerance_percent=args.regression_tolerance,
+                )
+                if previous_runs
+                else []
+            )
+            append_run(args.history, evaluation)
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
+            payload = {
+                **evaluation.to_dict(),
+                "regressions": [asdict(item) for item in regressions],
+                "report_path": str(args.report),
+            }
+            print(json.dumps(payload, indent=2))
+            return 3 if regressions else 0
 
         correctness = run_correctness(args.test, cwd=args.candidate)
         baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)

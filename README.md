@@ -17,6 +17,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Provider-independent AI candidate generation with strict JSON contracts
 - Safe unified-diff validation and measured multi-candidate ranking
 - Resource-limited execution, optional network-disabled Docker isolation, and hash-chained audits
+- Reproducible benchmark corpus, confidence intervals, history, and regression reports
 
 ## Quick start
 
@@ -72,6 +73,19 @@ perf-engineer optimize \
 The container runs with networking disabled, a read-only filesystem, all Linux capabilities
 dropped, process and memory quotas, and `no-new-privileges`. Local execution also sanitizes the
 environment, applies OS resource limits, and kills the entire process group on timeout.
+
+Run the checked-in evaluation corpus and generate a report:
+
+```bash
+perf-engineer evaluate \
+  --corpus benchmarks/corpus.json \
+  --rounds 9 \
+  --history .perf-engineer/history.jsonl \
+  --report .perf-engineer/report.md
+```
+
+The report includes correctness and acceptance rates, median speedup, a deterministic 95%
+bootstrap confidence interval, per-case outcomes, and regressions against the previous run.
 
 Candidate patches cannot create, delete, rename, or modify non-Python files. Each valid patch is
 applied in a disposable worktree, tested, benchmarked, and ranked. Model confidence never affects
@@ -133,4 +147,4 @@ pytest
 - **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent records (current)
 - **M3 — AI optimization:** structured candidate generation and multi-candidate ranking (current)
 - **M4 — Hardening:** container isolation, quotas, audit logs, property checks (current)
-- **M5 — Evaluation:** reproducible optimization corpus and public effectiveness metrics
+- **M5 — Evaluation:** reproducible corpus, effectiveness metrics, regression reports (current)
