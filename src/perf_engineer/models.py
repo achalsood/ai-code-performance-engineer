@@ -30,6 +30,8 @@ class BenchmarkResult:
     stdev_seconds: float
     min_seconds: float
     max_seconds: float
+    cpu_mean_seconds: float = 0.0
+    peak_memory_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -45,3 +47,20 @@ class VerificationResult:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
+@dataclass(frozen=True)
+class ExperimentRecord:
+    schema_version: int
+    experiment_id: str
+    created_at: str
+    repository: str
+    baseline_ref: str
+    baseline_commit: str
+    candidate_ref: str
+    candidate_commit: str
+    benchmark_command: tuple[str, ...]
+    test_command: tuple[str, ...]
+    result: VerificationResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

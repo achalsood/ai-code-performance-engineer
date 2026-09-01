@@ -9,6 +9,8 @@ from pathlib import Path
 
 from .analyzer import analyze_path
 from .benchmark import BenchmarkError, run_benchmark
+from .experiments import run_experiment, save_record
+from .repository import RepositoryError
 from .verification import compare, run_correctness
 
 
@@ -40,6 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--test", type=_command, required=True)
     verify.add_argument("--rounds", type=int, default=7)
     verify.add_argument("--minimum-improvement", type=float, default=5.0)
+
+    experiment = subparsers.add_parser(
+        "experiment", help="run a reproducible comparison between two Git revisions"
+    )
+    experiment.add_argument("--repository", type=Path, default=Path.cwd())
+    experiment.add_argument("--baseline-ref", required=True)
+    experiment.add_argument("--candidate-ref", required=True)
+    experiment.add_argument("--benchmark", type=_command, required=True)
+    experiment.add_argument("--test", type=_command, required=True)
+    experiment.add_argument("--rounds", type=int, default=7)
+    experiment.add_argument("--minimum-improvement", type=float, default=5.0)
+    experiment.add_argument("--output", type=Path, default=Path(".perf-engineer/experiments"))
     return parser
 
 
@@ -65,6 +79,21 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(asdict(benchmark_result), indent=2))
             return 0
 
+        if args.action == "experiment":
+            record = run_experiment(
+                repository=args.repository,
+                baseline_ref=args.baseline_ref,
+                candidate_ref=args.candidate_ref,
+                benchmark_command=args.benchmark,
+                test_command=args.test,
+                rounds=args.rounds,
+                minimum_improvement_percent=args.minimum_improvement,
+            )
+            destination = save_record(record, args.output)
+            payload = {**record.to_dict(), "record_path": str(destination)}
+            print(json.dumps(payload, indent=2))
+            return 0 if record.result.decision == "accept" else 2
+
         correctness = run_correctness(args.test, cwd=args.candidate)
         baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
         candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
@@ -76,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(verification_result.to_dict(), indent=2))
         return 0 if verification_result.decision == "accept" else 2
-    except (BenchmarkError, OSError, ValueError) as exc:
+    except (BenchmarkError, RepositoryError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

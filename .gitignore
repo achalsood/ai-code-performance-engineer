@@ -10,4 +10,4 @@ build/
 .coverage
 coverage.xml
 *.jsonl
-
+.perf-engineer/

@@ -12,6 +12,8 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Median/variance-based comparison instead of trusting a single timing
 - Correctness gate that rejects fast but broken candidates
 - Machine-readable JSON reports and CI across Python 3.11–3.13
+- Isolated Git worktrees and durable, versioned experiment records
+- Wall-clock, CPU-time, and peak-memory measurements
 
 ## Quick start
 
@@ -23,6 +25,21 @@ python -m pip install -e '.[dev]'
 perf-engineer analyze src
 perf-engineer benchmark "python examples/workload.py" --rounds 9
 ```
+
+Run a complete experiment directly from two Git revisions:
+
+```bash
+perf-engineer experiment \
+  --repository . \
+  --baseline-ref main~1 \
+  --candidate-ref main \
+  --benchmark "python benchmark.py" \
+  --test "python -m pytest"
+```
+
+The tool checks out both revisions into temporary detached worktrees, runs the correctness and
+measurement gates, writes a versioned record under `.perf-engineer/experiments`, and cleans up
+the worktrees even after a failure.
 
 Compare the same workload in two separate worktrees:
 
@@ -48,9 +65,9 @@ Repository -> Static analysis -> Candidate patch -> Correctness gate
                                         Accept / Reject
 ```
 
-The current release establishes the deterministic core. Planned layers are repository
-worktree orchestration, profiler adapters, an optional LLM candidate provider, sandboxed
-containers, ranked multi-candidate search, and a historical evaluation dataset.
+The current release establishes the deterministic core and repository runner. Planned layers
+are profiler adapters, an optional LLM candidate provider, sandboxed containers, ranked
+multi-candidate search, and a historical evaluation dataset.
 
 ## Engineering principles
 
@@ -77,8 +94,7 @@ pytest
 ## Roadmap
 
 - **M1 — Measurement core:** static analysis, benchmark runner, verification gate (current)
-- **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent experiment records
+- **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent records (current)
 - **M3 — AI optimization:** structured candidate generation and multi-candidate ranking
 - **M4 — Hardening:** container isolation, quotas, audit logs, property-based correctness checks
 - **M5 — Evaluation:** reproducible optimization corpus and public effectiveness metrics
-
