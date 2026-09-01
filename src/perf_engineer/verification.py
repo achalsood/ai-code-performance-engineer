@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
+from .execution import CommandRunner, ExecutionError, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
 
 
@@ -36,9 +36,18 @@ def compare(
     )
 
 
-def run_correctness(command: list[str], *, cwd: Path, timeout: float = 120.0) -> bool:
+def run_correctness(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: float = 120.0,
+    runner: CommandRunner | None = None,
+    policy: ExecutionPolicy | None = None,
+) -> bool:
+    selected_runner = runner or LocalProcessRunner()
+    selected_policy = policy or ExecutionPolicy(timeout_seconds=timeout, cpu_seconds=120)
     try:
-        result = subprocess.run(command, cwd=cwd, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired:
+        result = selected_runner.run(command, cwd=cwd, policy=selected_policy)
+    except (ExecutionError, OSError):
         return False
     return result.returncode == 0

@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "hypothesis>=6.100"]
 
 [project.scripts]
 perf-engineer = "perf_engineer.cli:main"
@@ -42,4 +42,3 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 python_version = "3.11"
 strict = true
 packages = ["perf_engineer"]
-

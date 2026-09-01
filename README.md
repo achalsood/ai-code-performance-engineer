@@ -16,6 +16,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Wall-clock, CPU-time, and peak-memory measurements
 - Provider-independent AI candidate generation with strict JSON contracts
 - Safe unified-diff validation and measured multi-candidate ranking
+- Resource-limited execution, optional network-disabled Docker isolation, and hash-chained audits
 
 ## Quick start
 
@@ -54,6 +55,23 @@ perf-engineer optimize \
   --test "python -m pytest" \
   --maximum-candidates 3
 ```
+
+For repositories you do not fully trust, use the Docker backend:
+
+```bash
+perf-engineer optimize \
+  --repository . \
+  --provider-command "python integrations/my_agent.py" \
+  --benchmark "python benchmark.py" \
+  --test "python -m pytest" \
+  --sandbox docker \
+  --memory-mb 1024 \
+  --timeout 30
+```
+
+The container runs with networking disabled, a read-only filesystem, all Linux capabilities
+dropped, process and memory quotas, and `no-new-privileges`. Local execution also sanitizes the
+environment, applies OS resource limits, and kills the entire process group on timeout.
 
 Candidate patches cannot create, delete, rename, or modify non-Python files. Each valid patch is
 applied in a disposable worktree, tested, benchmarked, and ranked. Model confidence never affects
@@ -114,5 +132,5 @@ pytest
 - **M1 — Measurement core:** static analysis, benchmark runner, verification gate (current)
 - **M2 — Repository runner:** Git worktrees, CPU/memory profiling, persistent records (current)
 - **M3 — AI optimization:** structured candidate generation and multi-candidate ranking (current)
-- **M4 — Hardening:** container isolation, quotas, audit logs, property-based correctness checks
+- **M4 — Hardening:** container isolation, quotas, audit logs, property checks (current)
 - **M5 — Evaluation:** reproducible optimization corpus and public effectiveness metrics

@@ -8,7 +8,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .analyzer import analyze_path
+from .audit import AuditLogger
 from .benchmark import run_benchmark
+from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
 from .patches import PatchValidationError, apply_patch
 from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
@@ -91,11 +93,24 @@ def optimize(
     rounds: int = 7,
     maximum_candidates: int = 3,
     minimum_improvement_percent: float = 5.0,
+    runner: CommandRunner | None = None,
+    policy: ExecutionPolicy | None = None,
+    audit_logger: AuditLogger | None = None,
 ) -> OptimizationRun:
     repository = repository.resolve()
     commit = resolve_commit(repository, baseline_ref)
+    selected_runner = runner or LocalProcessRunner()
+    selected_policy = policy or ExecutionPolicy()
+    if audit_logger:
+        audit_logger.append("optimization_started", {"baseline_commit": commit})
     with _worktree(repository, commit) as baseline_tree:
-        baseline = run_benchmark(benchmark_command, cwd=baseline_tree, rounds=rounds)
+        baseline = run_benchmark(
+            benchmark_command,
+            cwd=baseline_tree,
+            rounds=rounds,
+            runner=selected_runner,
+            policy=selected_policy,
+        )
         request = _request(repository, baseline_tree, maximum_candidates)
         candidates = provider.generate(request)
 
@@ -104,8 +119,19 @@ def optimize(
         try:
             with _worktree(repository, commit) as candidate_tree:
                 changed_paths = apply_patch(candidate_tree, candidate.patch)
-                correctness = run_correctness(test_command, cwd=candidate_tree)
-                measured = run_benchmark(benchmark_command, cwd=candidate_tree, rounds=rounds)
+                correctness = run_correctness(
+                    test_command,
+                    cwd=candidate_tree,
+                    runner=selected_runner,
+                    policy=selected_policy,
+                )
+                measured = run_benchmark(
+                    benchmark_command,
+                    cwd=candidate_tree,
+                    rounds=rounds,
+                    runner=selected_runner,
+                    policy=selected_policy,
+                )
                 result = compare(
                     baseline,
                     measured,
@@ -117,8 +143,17 @@ def optimize(
                         candidate, result.decision.value, result, None, changed_paths
                     )
                 )
+                if audit_logger:
+                    audit_logger.append(
+                        "candidate_evaluated",
+                        {"candidate_id": candidate.candidate_id, "status": result.decision.value},
+                    )
         except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
             evaluations.append(CandidateEvaluation(candidate, "invalid", None, str(exc), ()))
+            if audit_logger:
+                audit_logger.append(
+                    "candidate_invalid", {"candidate_id": candidate.candidate_id, "error": str(exc)}
+                )
 
     accepted = [
         item
@@ -135,4 +170,6 @@ def optimize(
         else (0.0, 0, "")
     )
     winner = accepted[0].candidate.candidate_id if accepted else None
+    if audit_logger:
+        audit_logger.append("optimization_completed", {"winner_id": winner})
     return OptimizationRun(commit, baseline, tuple(evaluations), winner)

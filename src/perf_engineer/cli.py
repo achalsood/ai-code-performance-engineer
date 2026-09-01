@@ -8,7 +8,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .analyzer import analyze_path
+from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_benchmark
+from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
 from .optimizer import optimize
 from .providers import CommandProvider, ProviderError
@@ -68,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--rounds", type=int, default=7)
     optimize_parser.add_argument("--maximum-candidates", type=int, default=3)
     optimize_parser.add_argument("--minimum-improvement", type=float, default=5.0)
+    optimize_parser.add_argument("--sandbox", choices=("local", "docker"), default="local")
+    optimize_parser.add_argument("--docker-image", default="python:3.12-slim")
+    optimize_parser.add_argument("--timeout", type=float, default=30.0)
+    optimize_parser.add_argument("--memory-mb", type=int, default=1024)
+    optimize_parser.add_argument(
+        "--audit-log", type=Path, default=Path(".perf-engineer/audit.jsonl")
+    )
     return parser
 
 
@@ -109,6 +118,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if record.result.decision == "accept" else 2
 
         if args.action == "optimize":
+            runner = (
+                DockerRunner(args.docker_image)
+                if args.sandbox == "docker"
+                else LocalProcessRunner()
+            )
+            policy = ExecutionPolicy(
+                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+            )
             optimization = optimize(
                 repository=args.repository,
                 baseline_ref=args.baseline_ref,
@@ -118,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
                 rounds=args.rounds,
                 maximum_candidates=args.maximum_candidates,
                 minimum_improvement_percent=args.minimum_improvement,
+                runner=runner,
+                policy=policy,
+                audit_logger=AuditLogger(args.audit_log),
             )
             print(json.dumps(optimization.to_dict(), indent=2))
             return 0 if optimization.winner_id else 2

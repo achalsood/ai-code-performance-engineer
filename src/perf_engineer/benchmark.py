@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import os
-import resource
 import statistics
-import subprocess
-import time
 from pathlib import Path
 
+from .execution import CommandRunner, ExecutionError, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult
 
 
@@ -15,46 +12,38 @@ class BenchmarkError(RuntimeError):
 
 
 def run_benchmark(
-    command: list[str], *, cwd: Path, rounds: int = 7, warmups: int = 2, timeout: float = 30.0
+    command: list[str],
+    *,
+    cwd: Path,
+    rounds: int = 7,
+    warmups: int = 2,
+    timeout: float = 30.0,
+    runner: CommandRunner | None = None,
+    policy: ExecutionPolicy | None = None,
 ) -> BenchmarkResult:
     if rounds < 3:
         raise ValueError("rounds must be at least 3")
     if warmups < 0:
         raise ValueError("warmups cannot be negative")
 
-    env = {**os.environ, "PYTHONHASHSEED": "0"}
+    selected_runner = runner or LocalProcessRunner()
+    selected_policy = policy or ExecutionPolicy(timeout_seconds=timeout)
     samples: list[float] = []
     cpu_samples: list[float] = []
     peak_memory_bytes = 0
     for iteration in range(warmups + rounds):
-        usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-        started = time.perf_counter()
         try:
-            completed = subprocess.run(
-                command,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise BenchmarkError(f"benchmark timed out after {timeout:g}s") from exc
-        elapsed = time.perf_counter() - started
-        usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            completed = selected_runner.run(command, cwd=cwd, policy=selected_policy)
+        except ExecutionError as exc:
+            raise BenchmarkError(str(exc)) from exc
         if completed.returncode != 0:
-            error = completed.stderr.decode("utf-8", errors="replace")[-1000:]
-            raise BenchmarkError(f"command exited with {completed.returncode}: {error}")
-        if iteration >= warmups:
-            samples.append(elapsed)
-            cpu_samples.append(
-                (usage_after.ru_utime - usage_before.ru_utime)
-                + (usage_after.ru_stime - usage_before.ru_stime)
+            raise BenchmarkError(
+                f"command exited with {completed.returncode}: {completed.stderr}"
             )
-            # Linux reports KiB; macOS reports bytes. The project currently targets Linux CI.
-            peak_memory_bytes = max(peak_memory_bytes, int(usage_after.ru_maxrss * 1024))
+        if iteration >= warmups:
+            samples.append(completed.wall_seconds)
+            cpu_samples.append(completed.cpu_seconds)
+            peak_memory_bytes = max(peak_memory_bytes, completed.peak_memory_bytes)
 
     return BenchmarkResult(
         command=tuple(command),
