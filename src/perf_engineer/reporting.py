@@ -23,14 +23,15 @@ def markdown_report(run: EvaluationRun, regressions: list[Regression]) -> str:
         "",
         "## Cases",
         "",
-        "| Case | Decision | Speedup | Correct |",
-        "|---|---|---:|---:|",
+        "| Case | Decision | Speedup | 95% CI | Correct |",
+        "|---|---|---:|---:|---:|",
     ]
     for result in run.results:
         verification = result.verification
         lines.append(
             f"| {result.case.case_id} | {verification.decision.value} | "
             f"{verification.speedup_percent:.1f}% | "
+            f"{verification.speedup_ci95_low:.1f}%–{verification.speedup_ci95_high:.1f}% | "
             f"{'yes' if verification.correctness_passed else 'no'} |"
         )
     lines.extend(["", "## Regression check", ""])

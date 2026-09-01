@@ -2,7 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from perf_engineer.optimizer import optimize
+from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
 
@@ -44,6 +44,10 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
 
     assert result.winner_id == "fast"
     assert result.evaluations[0].status == "accept"
+    record = save_optimization(result, tmp_path / "records")
+    patch = export_winning_patch(result, tmp_path / "winner.patch")
+    assert record.exists()
+    assert patch and "time.sleep(0.001)" in patch.read_text()
     worktrees = subprocess.check_output(
         ["git", "-C", str(repository), "worktree", "list", "--porcelain"], text=True
     )

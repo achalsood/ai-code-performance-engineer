@@ -43,6 +43,8 @@ class VerificationResult:
     reason: str
     baseline: BenchmarkResult
     candidate: BenchmarkResult
+    speedup_ci95_low: float = 0.0
+    speedup_ci95_high: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -111,6 +111,9 @@ perf-engineer optimize \
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.
+Optimization decisions require the lower bound of a bootstrapped 95% speedup interval to clear
+the configured threshold. Every run is saved as JSON and an accepted winner is exported as a
+reviewable unified-diff patch; the tool never commits model output automatically.
 
 Compare the same workload in two separate worktrees:
 

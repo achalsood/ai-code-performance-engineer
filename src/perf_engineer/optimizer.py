@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import os
 import subprocess
 import tempfile
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .analyzer import analyze_path
@@ -29,6 +32,9 @@ class CandidateEvaluation:
 
 @dataclass(frozen=True)
 class OptimizationRun:
+    schema_version: int
+    run_id: str
+    created_at: str
     baseline_commit: str
     baseline: BenchmarkResult
     evaluations: tuple[CandidateEvaluation, ...]
@@ -67,13 +73,29 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
 
 
 def _request(repository: Path, worktree: Path, maximum_candidates: int) -> OptimizationRequest:
-    findings = tuple(analyze_path(worktree))
-    relevant_paths = sorted({Path(item.path) for item in findings})[:20]
+    raw_findings = tuple(analyze_path(worktree))
+    finding_paths = {Path(item.path) for item in raw_findings}
+    fallback_paths = (
+        path
+        for path in sorted(worktree.rglob("*.py"))
+        if ".git" not in path.parts and "__pycache__" not in path.parts
+    )
+    relevant_paths = list(sorted(finding_paths))
+    relevant_paths.extend(path for path in fallback_paths if path not in finding_paths)
     files: dict[str, str] = {}
-    for absolute_path in relevant_paths:
+    total_bytes = 0
+    for absolute_path in relevant_paths[:20]:
         relative = absolute_path.relative_to(worktree)
-        content = absolute_path.read_text(encoding="utf-8")
-        files[str(relative)] = content[:30_000]
+        content = absolute_path.read_text(encoding="utf-8")[:30_000]
+        encoded_size = len(content.encode("utf-8"))
+        if total_bytes + encoded_size > 120_000:
+            break
+        files[relative.as_posix()] = content
+        total_bytes += encoded_size
+    findings = tuple(
+        replace(item, path=Path(item.path).relative_to(worktree).as_posix())
+        for item in raw_findings
+    )
     return OptimizationRequest(
         objective="Improve runtime or memory use without changing observable behavior.",
         language="python",
@@ -172,4 +194,42 @@ def optimize(
     winner = accepted[0].candidate.candidate_id if accepted else None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
-    return OptimizationRun(commit, baseline, tuple(evaluations), winner)
+    return OptimizationRun(
+        schema_version=1,
+        run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
+        created_at=datetime.now(UTC).isoformat(),
+        baseline_commit=commit,
+        baseline=baseline,
+        evaluations=tuple(evaluations),
+        winner_id=winner,
+    )
+
+
+def save_optimization(run: OptimizationRun, output_directory: Path) -> Path:
+    output_directory.mkdir(parents=True, exist_ok=True)
+    destination = output_directory / f"{run.run_id}.json"
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{run.run_id}-", suffix=".tmp", dir=output_directory
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(run.to_dict(), stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, destination)
+    except BaseException:
+        Path(temporary_name).unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def export_winning_patch(run: OptimizationRun, destination: Path) -> Path | None:
+    winner = next(
+        (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id), None
+    )
+    if winner is None:
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(winner.candidate.patch, encoding="utf-8")
+    return destination

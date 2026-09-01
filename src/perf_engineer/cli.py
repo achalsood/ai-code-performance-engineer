@@ -14,7 +14,7 @@ from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
 from .history import append_run, detect_regressions, read_runs
-from .optimizer import optimize
+from .optimizer import export_winning_patch, optimize, save_optimization
 from .providers import (
     CandidateProvider,
     CommandProvider,
@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--memory-mb", type=int, default=1024)
     optimize_parser.add_argument(
         "--audit-log", type=Path, default=Path(".perf-engineer/audit.jsonl")
+    )
+    optimize_parser.add_argument(
+        "--output", type=Path, default=Path(".perf-engineer/optimizations")
+    )
+    optimize_parser.add_argument(
+        "--output-patch", type=Path, default=Path(".perf-engineer/winner.patch")
     )
 
     evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
@@ -174,7 +180,14 @@ def main(argv: list[str] | None = None) -> int:
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),
             )
-            print(json.dumps(optimization.to_dict(), indent=2))
+            record_path = save_optimization(optimization, args.output)
+            patch_path = export_winning_patch(optimization, args.output_patch)
+            payload = {
+                **optimization.to_dict(),
+                "record_path": str(record_path),
+                "winner_patch_path": str(patch_path) if patch_path else None,
+            }
+            print(json.dumps(payload, indent=2))
             return 0 if optimization.winner_id else 2
 
         if args.action == "evaluate":

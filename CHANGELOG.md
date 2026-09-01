@@ -16,5 +16,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local OS limits, optional Docker isolation, and tamper-evident audit logs.
 - Reproducible optimization corpus, confidence intervals, history, and regression reports.
 - Python 3.11–3.13 CI, benchmark artifacts, and automated GitHub releases.
+- Bootstrap confidence gates that require the lower 95% bound to clear the threshold.
+- Persisted optimization records and safe export of winning patches for human review.
+- Bounded fallback source context when static analysis produces no findings.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0
