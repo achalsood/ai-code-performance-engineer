@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import resource
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +81,23 @@ def _resident_memory_bytes(process_id: int) -> int:
     return 0
 
 
+def _process_group_memory_bytes(process_group_id: int) -> int:
+    total = 0
+    try:
+        process_directories = (path for path in Path("/proc").iterdir() if path.name.isdigit())
+        for process_directory in process_directories:
+            try:
+                stat = (process_directory / "stat").read_text()
+                fields = stat[stat.rfind(")") + 2 :].split()
+                if len(fields) > 2 and int(fields[2]) == process_group_id:
+                    total += _resident_memory_bytes(int(process_directory.name))
+            except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+                continue
+    except (FileNotFoundError, PermissionError):
+        return 0
+    return total
+
+
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
 
@@ -96,37 +115,47 @@ class LocalProcessRunner:
                 preexec_fn=lambda: _apply_limits(policy),
             )
             deadline = started + policy.timeout_seconds
-            peak_memory_bytes = 0
-            while True:
-                peak_memory_bytes = max(peak_memory_bytes, _resident_memory_bytes(process.pid))
-                if peak_memory_bytes > policy.memory_bytes:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    _, status, _ = os.wait4(process.pid, 0)
-                    process.returncode = os.waitstatus_to_exitcode(status)
-                    raise ExecutionError(
-                        f"command exceeded memory limit of {policy.memory_bytes} bytes"
-                    )
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    _, status, _ = os.wait4(process.pid, 0)
-                    process.returncode = os.waitstatus_to_exitcode(status)
-                    message = f"command timed out after {policy.timeout_seconds:g}s"
-                    raise ExecutionError(message)
-                waited_pid, status, child_usage = os.wait4(process.pid, os.WNOHANG)
-                if waited_pid:
-                    returncode = os.waitstatus_to_exitcode(status)
-                    process.returncode = returncode
-                    peak_memory_bytes = max(
-                        peak_memory_bytes, int(child_usage.ru_maxrss * 1024)
-                    )
-                    break
-                time.sleep(min(0.005, remaining))
+            stopped = threading.Event()
+            monitoring_peak = 0
+            violation: str | None = None
+
+            def monitor() -> None:
+                nonlocal monitoring_peak, violation
+                while not stopped.wait(0.01):
+                    observed = _process_group_memory_bytes(process.pid)
+                    monitoring_peak = max(monitoring_peak, observed)
+                    if monitoring_peak > policy.memory_bytes:
+                        violation = "memory"
+                    elif time.perf_counter() >= deadline:
+                        violation = "timeout"
+                    else:
+                        continue
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    return
+
+            monitor_thread = threading.Thread(target=monitor, daemon=True)
+            monitor_thread.start()
+            _, status, child_usage = os.wait4(process.pid, 0)
+            finished = time.perf_counter()
+            process.returncode = os.waitstatus_to_exitcode(status)
+            stopped.set()
+            monitor_thread.join()
+            returncode = process.returncode
+            peak_memory_bytes = max(
+                monitoring_peak, int(child_usage.ru_maxrss * 1024)
+            )
             errors.seek(0)
             stderr = errors.read().decode("utf-8", errors="replace")[-1000:]
+        if violation == "memory":
+            raise ExecutionError(
+                f"command exceeded memory limit of {policy.memory_bytes} bytes"
+            )
+        if violation == "timeout":
+            raise ExecutionError(f"command timed out after {policy.timeout_seconds:g}s")
         return ExecutionResult(
             returncode=returncode,
-            wall_seconds=time.perf_counter() - started,
+            wall_seconds=finished - started,
             cpu_seconds=child_usage.ru_utime + child_usage.ru_stime,
             peak_memory_bytes=peak_memory_bytes,
             stderr=stderr,

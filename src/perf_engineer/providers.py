@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -188,6 +189,8 @@ def _post_json(
     *,
     headers: dict[str, str] | None = None,
     timeout: float,
+    maximum_response_bytes: int = 2_000_000,
+    attempts: int = 3,
 ) -> dict[str, object]:
     request = urllib.request.Request(
         url,
@@ -195,11 +198,25 @@ def _post_json(
         headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise ProviderError(f"provider request failed: {exc}") from exc
+    last_error: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                content = response.read(maximum_response_bytes + 1)
+            if len(content) > maximum_response_bytes:
+                raise ProviderError("provider response exceeded the size limit")
+            payload = json.loads(content)
+            break
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code != 429 and exc.code < 500:
+                raise ProviderError(f"provider request failed with HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last_error = exc
+        if attempt + 1 < attempts:
+            time.sleep(0.25 * (2**attempt))
+    else:
+        raise ProviderError(f"provider request failed after {attempts} attempts: {last_error}")
     if not isinstance(payload, dict):
         raise ProviderError("provider returned a non-object response")
     return payload

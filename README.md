@@ -35,6 +35,13 @@ perf-engineer analyze src
 perf-engineer benchmark "python examples/workload.py" --rounds 9
 ```
 
+Export findings into GitHub code scanning or fail CI on severe risks:
+
+```bash
+perf-engineer analyze src --format sarif --output performance.sarif
+perf-engineer analyze src --fail-on high
+```
+
 Run a complete experiment directly from two Git revisions:
 
 ```bash

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 
 import tree_sitter_javascript
@@ -8,6 +9,21 @@ import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser
 
 from .models import Finding
+
+SUPPORTED_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+EXCLUDED_DIRECTORIES = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "build",
+    "dist",
+    "node_modules",
+    "vendor",
+    "__pycache__",
+}
 
 
 class PerformanceVisitor(ast.NodeVisitor):
@@ -92,16 +108,7 @@ def analyze_file(path: Path) -> list[Finding]:
 
 
 def analyze_path(path: Path) -> list[Finding]:
-    if path.is_file():
-        files = [path]
-    else:
-        supported = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
-        files = [
-            file
-            for file in sorted(path.rglob("*"))
-            if file.suffix in supported
-            and not {".git", "node_modules", "__pycache__"}.intersection(file.parts)
-        ]
+    files = [path] if path.is_file() else discover_files(path)
     findings: list[Finding] = []
     for file in files:
         if file.suffix == ".py":
@@ -109,6 +116,22 @@ def analyze_path(path: Path) -> list[Finding]:
         else:
             findings.extend(analyze_javascript_file(file))
     return findings
+
+
+def discover_files(path: Path) -> list[Path]:
+    """Discover supported files without descending into dependency or build trees."""
+    files: list[Path] = []
+    for root, directories, filenames in os.walk(path):
+        directories[:] = sorted(
+            directory for directory in directories if directory not in EXCLUDED_DIRECTORIES
+        )
+        directory_path = Path(root)
+        files.extend(
+            directory_path / filename
+            for filename in sorted(filenames)
+            if Path(filename).suffix in SUPPORTED_SUFFIXES
+        )
+    return files
 
 
 _LOOP_NODES = {"for_statement", "for_in_statement", "while_statement", "do_statement"}

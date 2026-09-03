@@ -25,6 +25,7 @@ from .providers import (
 )
 from .reporting import markdown_report
 from .repository import RepositoryError
+from .sarif import findings_to_sarif
 from .verification import compare, run_correctness
 
 
@@ -41,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     analyze = subparsers.add_parser("analyze", help="find static performance risks")
     analyze.add_argument("path", type=Path)
     analyze.add_argument("--json", action="store_true")
+    analyze.add_argument("--format", choices=("text", "json", "sarif"), default="text")
+    analyze.add_argument("--output", type=Path)
+    analyze.add_argument("--fail-on", choices=("none", "medium", "high"), default="none")
 
     benchmark = subparsers.add_parser("benchmark", help="measure a command")
     benchmark.add_argument("command", type=_command)
@@ -120,12 +124,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.action == "analyze":
             findings = analyze_path(args.path)
-            if args.json:
-                print(json.dumps([asdict(item) for item in findings], indent=2))
+            output_format = "json" if args.json else args.format
+            if output_format == "sarif":
+                rendered = json.dumps(findings_to_sarif(findings), indent=2)
+            elif output_format == "json":
+                rendered = json.dumps([asdict(item) for item in findings], indent=2)
             else:
-                for item in findings:
-                    print(f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}")
-            return 0
+                rendered = "\n".join(
+                    f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}"
+                    for item in findings
+                )
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(rendered + ("\n" if rendered else ""), encoding="utf-8")
+            elif rendered:
+                print(rendered)
+            threshold = {"none": 99, "medium": 1, "high": 2}[args.fail_on]
+            severity = {"low": 0, "medium": 1, "high": 2}
+            return 4 if any(severity.get(item.severity, 1) >= threshold for item in findings) else 0
         if args.action == "benchmark":
             benchmark_result = run_benchmark(
                 args.command,

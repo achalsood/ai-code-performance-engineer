@@ -23,5 +23,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Normalized resource and Python cProfile adapters with ranked hotspots.
 - Mixed Python/JavaScript evaluation corpus and Node.js CI coverage.
 - Per-process physical-memory monitoring compatible with V8 virtual heap reservation.
+- Dependency-tree pruning for scalable repository discovery and SARIF code-scanning output.
+- Process-group memory accounting plus bounded, retrying provider HTTP requests.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0

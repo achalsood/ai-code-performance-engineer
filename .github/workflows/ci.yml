@@ -7,8 +7,25 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
+  code-scan:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Generate performance SARIF
+        run: perf-engineer analyze src --format sarif --output performance.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: performance.sarif
+
   quality:
     runs-on: ubuntu-latest
     strategy:
