@@ -41,7 +41,7 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: ruff check .
       - run: mypy src
-      - run: pytest
+      - run: pytest --cov=perf_engineer --cov-report=term-missing --cov-fail-under=80
 
   benchmark:
     runs-on: ubuntu-latest

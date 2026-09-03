@@ -25,5 +25,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Per-process physical-memory monitoring compatible with V8 virtual heap reservation.
 - Dependency-tree pruning for scalable repository discovery and SARIF code-scanning output.
 - Process-group memory accounting plus bounded, retrying provider HTTP requests.
+- Secret-redacted provider context, original-source hashes, and environment fingerprints.
+- Coverage enforcement, Dependabot, release SBOMs, and build-provenance attestations.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0

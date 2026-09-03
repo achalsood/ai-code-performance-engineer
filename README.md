@@ -23,6 +23,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Resource-limited execution, optional network-disabled Docker isolation, and hash-chained audits
 - Reproducible benchmark corpus, confidence intervals, history, and regression reports
 - Python, JavaScript, and TypeScript AST analysis plus normalized profiler adapters
+- Secret-redacted AI context, content hashes, and reproducible environment fingerprints
 
 ## Quick start
 
@@ -131,6 +132,8 @@ appends read only the final hash-chain record, keeping logging constant-time as 
 Optimization decisions require the lower bound of a bootstrapped 95% speedup interval to clear
 the configured threshold. Every run is saved as JSON and an accepted winner is exported as a
 reviewable unified-diff patch; the tool never commits model output automatically.
+Before source is sent to a provider, common API keys, access tokens, passwords, and private keys
+are redacted. Original file hashes and redaction counts remain in the request for provenance.
 
 Compare the same workload in two separate worktrees:
 

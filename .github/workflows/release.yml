@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -22,6 +24,11 @@ jobs:
       - run: pytest
       - run: python -m build
       - run: python -m twine check dist/*
+      - name: Generate SBOM
+        run: cyclonedx-py environment --output-file dist/sbom.cdx.json
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

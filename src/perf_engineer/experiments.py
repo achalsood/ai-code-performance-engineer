@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .benchmark import run_benchmark
+from .environment import environment_fingerprint
 from .models import ExperimentRecord
 from .repository import isolated_worktrees
 from .verification import compare, run_correctness
@@ -46,6 +47,7 @@ def run_experiment(
             benchmark_command=tuple(benchmark_command),
             test_command=tuple(test_command),
             result=result,
+            environment=environment_fingerprint(),
         )
 
 

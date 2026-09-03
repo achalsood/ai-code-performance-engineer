@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import __version__
 from .models import Finding
 
 
@@ -47,7 +48,7 @@ def findings_to_sarif(findings: list[Finding]) -> dict[str, Any]:
                 "tool": {
                     "driver": {
                         "name": "AI Code Performance Engineer",
-                        "semanticVersion": "1.0.0",
+                        "semanticVersion": __version__,
                         "informationUri": (
                             "https://github.com/achalsood/ai-code-performance-engineer"
                         ),

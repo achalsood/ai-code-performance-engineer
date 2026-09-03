@@ -63,6 +63,7 @@ class ExperimentRecord:
     benchmark_command: tuple[str, ...]
     test_command: tuple[str, ...]
     result: VerificationResult
+    environment: dict[str, str | int | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

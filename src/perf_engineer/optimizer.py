@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import subprocess
@@ -13,10 +14,12 @@ from pathlib import Path
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import run_benchmark
+from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
 from .patches import PatchValidationError, apply_patch
 from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
+from .redaction import redact_secrets
 from .repository import resolve_commit
 from .verification import compare, run_correctness
 
@@ -39,6 +42,7 @@ class OptimizationRun:
     baseline: BenchmarkResult
     evaluations: tuple[CandidateEvaluation, ...]
     winner_id: str | None
+    environment: dict[str, str | int | None] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -50,6 +54,14 @@ def _git(repository: Path, *arguments: str) -> None:
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(64 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @contextlib.contextmanager
@@ -85,14 +97,21 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
     relevant_paths = list(sorted(finding_paths))
     relevant_paths.extend(path for path in fallback_paths if path not in finding_paths)
     files: dict[str, str] = {}
+    file_hashes: dict[str, str] = {}
+    redaction_counts: dict[str, int] = {}
     total_bytes = 0
     for absolute_path in relevant_paths[:20]:
         relative = absolute_path.relative_to(worktree)
-        content = absolute_path.read_text(encoding="utf-8")[:30_000]
-        encoded_size = len(content.encode("utf-8"))
+        with absolute_path.open(encoding="utf-8") as stream:
+            original = stream.read(30_000)
+        redacted = redact_secrets(original)
+        encoded_size = len(redacted.content.encode("utf-8"))
         if total_bytes + encoded_size > 120_000:
             break
-        files[relative.as_posix()] = content
+        relative_name = relative.as_posix()
+        files[relative_name] = redacted.content
+        file_hashes[relative_name] = _sha256_file(absolute_path)
+        redaction_counts[relative_name] = redacted.redaction_count
         total_bytes += encoded_size
     findings = tuple(
         replace(item, path=Path(item.path).relative_to(worktree).as_posix())
@@ -116,6 +135,8 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         findings=findings,
         files=files,
         maximum_candidates=maximum_candidates,
+        file_hashes=file_hashes,
+        redaction_counts=redaction_counts,
     )
 
 
@@ -216,6 +237,7 @@ def optimize(
         baseline=baseline,
         evaluations=tuple(evaluations),
         winner_id=winner,
+        environment=environment_fingerprint(),
     )
 
 

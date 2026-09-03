@@ -23,6 +23,8 @@ class OptimizationRequest:
     findings: tuple[Finding, ...]
     files: dict[str, str]
     maximum_candidates: int
+    file_hashes: dict[str, str] | None = None
+    redaction_counts: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)

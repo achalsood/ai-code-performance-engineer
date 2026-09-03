@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from . import __version__
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_benchmark
@@ -38,6 +39,7 @@ def _command(value: str) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="perf-engineer")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="action", required=True)
     analyze = subparsers.add_parser("analyze", help="find static performance risks")
     analyze.add_argument("path", type=Path)

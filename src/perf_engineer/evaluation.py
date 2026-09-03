@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .benchmark import run_paired_benchmarks
+from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import Decision, VerificationResult
 from .verification import compare, run_correctness
@@ -49,6 +50,7 @@ class EvaluationRun:
     created_at: str
     results: tuple[CaseResult, ...]
     summary: EvaluationSummary
+    environment: dict[str, str | int | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -147,4 +149,5 @@ def evaluate_corpus(
         created_at=datetime.now(UTC).isoformat(),
         results=tuple(results),
         summary=summarize(results),
+        environment=environment_fingerprint(),
     )
