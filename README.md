@@ -13,7 +13,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 
 - Python, JavaScript, and TypeScript AST analysis for common performance risks
 - Isolated command benchmarks with warmups, timeouts, deterministic hash seeds, and raw samples
-- Median/variance-based comparison instead of trusting a single timing
+- Adaptive AB/BA trials with robust paired-effect statistics instead of trusting a single timing
 - Correctness gate that rejects fast but broken candidates
 - Machine-readable JSON reports and CI across Python 3.11–3.13
 - Isolated Git worktrees and durable, versioned experiment records
@@ -124,14 +124,23 @@ OPENAI_API_KEY=... perf-engineer optimize \
 # Local Ollama
 perf-engineer optimize \
   --repository . --provider ollama --model qwen2.5-coder \
-  --benchmark "python benchmark.py" --test "python -m pytest"
+  --benchmark "python benchmark.py" --test "python -m pytest" \
+  --rounds 7 --maximum-rounds 21 \
+  --maximum-memory-regression 10 --maximum-cpu-regression 10
 ```
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.
-Optimization decisions require the lower bound of a bootstrapped 95% speedup interval to clear
-the configured threshold. Every run is saved as JSON and an accepted winner is exported as a
-reviewable unified-diff patch; the tool never commits model output automatically.
+Optimization candidates receive severity-ranked findings and hotspot hints. Each patch is measured
+against a fresh baseline using alternating AB/BA trials; sampling stops when the paired effect is
+stable and expands to `--maximum-rounds` when it is noisy. Decisions require the lower bound of a
+paired bootstrapped 95% speedup interval to clear the configured threshold, a meaningful absolute
+runtime reduction, and compliance with CPU and memory regression budgets. Accepted candidates are
+ranked by a conservative utility score using the confidence lower bound with resource penalties.
+Every run is saved as JSON and an accepted winner is exported as a reviewable unified-diff patch;
+the tool never commits model output automatically.
+Candidates that fail correctness are rejected before benchmarking, avoiding expensive measurements
+that cannot produce an acceptable result.
 Before source is sent to a provider, common API keys, access tokens, passwords, and private keys
 are redacted. Original file hashes and redaction counts remain in the request for provenance.
 

@@ -108,3 +108,49 @@ def run_paired_benchmarks(
         _summarize(command, samples["baseline"], cpu["baseline"], memory["baseline"]),
         _summarize(command, samples["candidate"], cpu["candidate"], memory["candidate"]),
     )
+
+
+def run_adaptive_paired_benchmarks(
+    command: list[str],
+    *,
+    baseline_cwd: Path,
+    candidate_cwd: Path,
+    minimum_rounds: int = 7,
+    maximum_rounds: int = 21,
+    warmups: int = 2,
+    target_mad_percent: float = 1.5,
+    runner: CommandRunner | None = None,
+    policy: ExecutionPolicy | None = None,
+) -> tuple[BenchmarkResult, BenchmarkResult]:
+    """Run matched AB/BA trials until their speedup estimate is stable or the budget is spent."""
+    if minimum_rounds < 3 or maximum_rounds < minimum_rounds:
+        raise ValueError("adaptive rounds require 3 <= minimum_rounds <= maximum_rounds")
+    selected_runner = runner or LocalProcessRunner()
+    selected_policy = policy or ExecutionPolicy()
+    for directory in (baseline_cwd, candidate_cwd):
+        for _ in range(warmups):
+            _measure_once(command, directory, selected_runner, selected_policy)
+    samples: dict[str, list[float]] = {"baseline": [], "candidate": []}
+    cpu: dict[str, list[float]] = {"baseline": [], "candidate": []}
+    memory = {"baseline": 0, "candidate": 0}
+    directories = {"baseline": baseline_cwd, "candidate": candidate_cwd}
+    for round_index in range(maximum_rounds):
+        order = ("baseline", "candidate") if round_index % 2 == 0 else ("candidate", "baseline")
+        for name in order:
+            result = _measure_once(command, directories[name], selected_runner, selected_policy)
+            samples[name].append(result.wall_seconds)
+            cpu[name].append(result.cpu_seconds)
+            memory[name] = max(memory[name], result.peak_memory_bytes)
+        if round_index + 1 >= minimum_rounds:
+            effects = [
+                (before - after) / before * 100 if before else 0.0
+                for before, after in zip(samples["baseline"], samples["candidate"], strict=True)
+            ]
+            center = statistics.median(effects)
+            mad = statistics.median(abs(effect - center) for effect in effects)
+            if mad <= target_mad_percent:
+                break
+    return (
+        _summarize(command, samples["baseline"], cpu["baseline"], memory["baseline"]),
+        _summarize(command, samples["candidate"], cpu["candidate"], memory["candidate"]),
+    )

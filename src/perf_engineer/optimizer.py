@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .analyzer import analyze_path
 from .audit import AuditLogger
-from .benchmark import run_benchmark
+from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
@@ -31,6 +31,7 @@ class CandidateEvaluation:
     result: VerificationResult | None
     error: str | None
     changed_paths: tuple[str, ...]
+    utility_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -113,9 +114,22 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         file_hashes[relative_name] = _sha256_file(absolute_path)
         redaction_counts[relative_name] = redacted.redaction_count
         total_bytes += encoded_size
+    severity_order = {"high": 0, "medium": 1, "low": 2}
     findings = tuple(
-        replace(item, path=Path(item.path).relative_to(worktree).as_posix())
-        for item in raw_findings
+        sorted(
+            (
+                replace(item, path=Path(item.path).relative_to(worktree).as_posix())
+                for item in raw_findings
+            ),
+            key=lambda item: (severity_order.get(item.severity, 1), item.path, item.line),
+        )
+    )
+    rule_counts: dict[str, int] = {}
+    for finding in findings:
+        rule_counts[finding.rule_id] = rule_counts.get(finding.rule_id, 0) + 1
+    optimization_hints = tuple(
+        f"Prioritize {rule_id}: {count} occurrence(s); validate its effect in isolation."
+        for rule_id, count in sorted(rule_counts.items(), key=lambda item: (-item[1], item[0]))
     )
     language_names = {
         "py": "python",
@@ -126,9 +140,7 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         "ts": "typescript",
         "tsx": "typescript",
     }
-    detected_languages = {
-        language_names[Path(path).suffix.lstrip(".")] for path in files
-    }
+    detected_languages = {language_names[Path(path).suffix.lstrip(".")] for path in files}
     return OptimizationRequest(
         objective="Improve runtime or memory use without changing observable behavior.",
         language=", ".join(sorted(detected_languages)),
@@ -137,6 +149,7 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         maximum_candidates=maximum_candidates,
         file_hashes=file_hashes,
         redaction_counts=redaction_counts,
+        optimization_hints=optimization_hints,
     )
 
 
@@ -150,6 +163,9 @@ def optimize(
     rounds: int = 7,
     maximum_candidates: int = 3,
     minimum_improvement_percent: float = 5.0,
+    maximum_rounds: int = 21,
+    maximum_memory_regression_percent: float = 10.0,
+    maximum_cpu_regression_percent: float = 10.0,
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
@@ -161,43 +177,69 @@ def optimize(
     if audit_logger:
         audit_logger.append("optimization_started", {"baseline_commit": commit})
     with _worktree(repository, commit) as baseline_tree:
-        baseline = run_benchmark(
-            benchmark_command,
-            cwd=baseline_tree,
-            rounds=rounds,
-            runner=selected_runner,
-            policy=selected_policy,
-        )
         request = _request(repository, baseline_tree, maximum_candidates)
         candidates = provider.generate(request)
 
     evaluations: list[CandidateEvaluation] = []
+    paired_baselines: list[BenchmarkResult] = []
     for candidate in candidates:
         try:
-            with _worktree(repository, commit) as candidate_tree:
-                changed_paths = apply_patch(candidate_tree, candidate.patch)
-                correctness = run_correctness(
-                    test_command,
-                    cwd=candidate_tree,
-                    runner=selected_runner,
-                    policy=selected_policy,
-                )
-                measured = run_benchmark(
-                    benchmark_command,
-                    cwd=candidate_tree,
-                    rounds=rounds,
-                    runner=selected_runner,
-                    policy=selected_policy,
-                )
+            with _worktree(repository, commit) as baseline_tree:
+                with _worktree(repository, commit) as candidate_tree:
+                    changed_paths = apply_patch(candidate_tree, candidate.patch)
+                    correctness = run_correctness(
+                        test_command,
+                        cwd=candidate_tree,
+                        runner=selected_runner,
+                        policy=selected_policy,
+                    )
+                    if not correctness:
+                        evaluations.append(
+                            CandidateEvaluation(
+                                candidate,
+                                Decision.REJECT.value,
+                                None,
+                                "candidate failed the correctness command",
+                                changed_paths,
+                                0.0,
+                            )
+                        )
+                        if audit_logger:
+                            audit_logger.append(
+                                "candidate_evaluated",
+                                {
+                                    "candidate_id": candidate.candidate_id,
+                                    "status": Decision.REJECT.value,
+                                },
+                            )
+                        continue
+                    baseline, measured = run_adaptive_paired_benchmarks(
+                        benchmark_command,
+                        baseline_cwd=baseline_tree,
+                        candidate_cwd=candidate_tree,
+                        minimum_rounds=rounds,
+                        maximum_rounds=max(rounds, maximum_rounds),
+                        runner=selected_runner,
+                        policy=selected_policy,
+                    )
+                paired_baselines.append(baseline)
                 result = compare(
                     baseline,
                     measured,
                     correctness_passed=correctness,
                     minimum_improvement_percent=minimum_improvement_percent,
+                    paired=True,
+                    maximum_memory_regression_percent=maximum_memory_regression_percent,
+                    maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                 )
                 evaluations.append(
                     CandidateEvaluation(
-                        candidate, result.decision.value, result, None, changed_paths
+                        candidate,
+                        result.decision.value,
+                        result,
+                        None,
+                        changed_paths,
+                        result.utility_score,
                     )
                 )
                 if audit_logger:
@@ -206,31 +248,43 @@ def optimize(
                         {"candidate_id": candidate.candidate_id, "status": result.decision.value},
                     )
         except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
-            evaluations.append(CandidateEvaluation(candidate, "invalid", None, str(exc), ()))
+            evaluations.append(CandidateEvaluation(candidate, "invalid", None, str(exc), (), 0.0))
             if audit_logger:
                 audit_logger.append(
                     "candidate_invalid", {"candidate_id": candidate.candidate_id, "error": str(exc)}
                 )
 
     accepted = [
-        item
-        for item in evaluations
-        if item.result and item.result.decision is Decision.ACCEPT
+        item for item in evaluations if item.result and item.result.decision is Decision.ACCEPT
     ]
     accepted.sort(
         key=lambda item: (
-            -item.result.speedup_percent,
-            item.result.candidate.peak_memory_bytes,
-            item.candidate.candidate_id,
+            (
+                -item.utility_score,
+                -item.result.speedup_ci95_low,
+                item.result.candidate.peak_memory_bytes,
+                item.candidate.candidate_id,
+            )
+            if item.result
+            else (0.0, 0.0, 0, "")
         )
-        if item.result
-        else (0.0, 0, "")
     )
     winner = accepted[0].candidate.candidate_id if accepted else None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
+    if paired_baselines:
+        baseline = paired_baselines[0]
+    else:
+        with _worktree(repository, commit) as baseline_tree:
+            baseline = run_benchmark(
+                benchmark_command,
+                cwd=baseline_tree,
+                rounds=rounds,
+                runner=selected_runner,
+                policy=selected_policy,
+            )
     return OptimizationRun(
-        schema_version=1,
+        schema_version=2,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,

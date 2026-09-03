@@ -27,5 +27,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Process-group memory accounting plus bounded, retrying provider HTTP requests.
 - Secret-redacted provider context, original-source hashes, and environment fingerprints.
 - Coverage enforcement, Dependabot, release SBOMs, and build-provenance attestations.
+- Hotspot-guided prompts, adaptive paired benchmarking, resource regression budgets, and
+  conservative multi-objective candidate ranking.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0

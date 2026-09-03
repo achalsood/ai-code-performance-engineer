@@ -88,8 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--benchmark", type=_command, required=True)
     optimize_parser.add_argument("--test", type=_command, required=True)
     optimize_parser.add_argument("--rounds", type=int, default=7)
+    optimize_parser.add_argument("--maximum-rounds", type=int, default=21)
     optimize_parser.add_argument("--maximum-candidates", type=int, default=3)
     optimize_parser.add_argument("--minimum-improvement", type=float, default=5.0)
+    optimize_parser.add_argument("--maximum-memory-regression", type=float, default=10.0)
+    optimize_parser.add_argument("--maximum-cpu-regression", type=float, default=10.0)
     optimize_parser.add_argument("--sandbox", choices=("local", "docker"), default="local")
     optimize_parser.add_argument("--docker-image", default="python:3.12-slim")
     optimize_parser.add_argument("--timeout", type=float, default=30.0)
@@ -220,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
                 rounds=args.rounds,
                 maximum_candidates=args.maximum_candidates,
                 minimum_improvement_percent=args.minimum_improvement,
+                maximum_rounds=args.maximum_rounds,
+                maximum_memory_regression_percent=args.maximum_memory_regression,
+                maximum_cpu_regression_percent=args.maximum_cpu_regression,
                 runner=runner,
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),

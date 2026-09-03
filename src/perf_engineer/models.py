@@ -45,6 +45,9 @@ class VerificationResult:
     candidate: BenchmarkResult
     speedup_ci95_low: float = 0.0
     speedup_ci95_high: float = 0.0
+    memory_change_percent: float = 0.0
+    cpu_change_percent: float = 0.0
+    utility_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

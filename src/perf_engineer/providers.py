@@ -25,6 +25,7 @@ class OptimizationRequest:
     maximum_candidates: int
     file_hashes: dict[str, str] | None = None
     redaction_counts: dict[str, int] | None = None
+    optimization_hints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,10 @@ def _system_prompt(maximum_candidates: int) -> str:
     return (
         "You are a code performance engineer. Return only JSON with a candidates array. "
         "Each candidate requires candidate_id, title, rationale, and a unified diff in patch. "
-        "Preserve observable behavior, modify only existing supported source files, and "
+        "Use the ranked findings and optimization_hints to target measured hot paths. "
+        "Prefer algorithmic or allocation reductions over cosmetic rewrites. Each candidate "
+        "must isolate one optimization so the benchmark can attribute its effect. Preserve "
+        "observable behavior, modify only existing supported source files, and "
         "produce at most "
         f"{maximum_candidates} independent candidates. Do not use markdown fences."
     )
