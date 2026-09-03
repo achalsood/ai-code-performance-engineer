@@ -9,11 +9,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Automatic Python baseline profiling that prioritizes repository-owned runtime hotspots in AI
   candidate context, with an opt-out for unsupported or externally profiled workloads.
+- Bounded AI refinement attempts that feed correctness failures, benchmark confidence, speedup,
+  CPU cost, and memory cost back to the provider when no initial candidate is acceptable.
+- Structured candidate strategy, expected-impact, and risk metadata with cross-attempt patch
+  deduplication and identifier collision handling.
 
 ### Changed
 
-- Optimization records use schema version 3 and retain the normalized baseline profile used to
-  guide candidate generation.
+- Optimization records use schema version 4 and retain the normalized baseline profile and number
+  of provider attempts used to guide candidate generation.
 
 ## [1.0.0] - 2026-09-03
 

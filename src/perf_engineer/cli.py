@@ -94,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--maximum-memory-regression", type=float, default=10.0)
     optimize_parser.add_argument("--maximum-cpu-regression", type=float, default=10.0)
     optimize_parser.add_argument("--profile-guidance", choices=("auto", "off"), default="auto")
+    optimize_parser.add_argument("--maximum-provider-attempts", type=int, default=2)
     optimize_parser.add_argument("--sandbox", choices=("local", "docker"), default="local")
     optimize_parser.add_argument("--docker-image", default="python:3.12-slim")
     optimize_parser.add_argument("--timeout", type=float, default=30.0)
@@ -228,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 maximum_memory_regression_percent=args.maximum_memory_regression,
                 maximum_cpu_regression_percent=args.maximum_cpu_regression,
                 profile_guidance=args.profile_guidance == "auto",
+                maximum_provider_attempts=args.maximum_provider_attempts,
                 runner=runner,
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),

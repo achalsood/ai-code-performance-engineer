@@ -28,6 +28,8 @@ class OptimizationRequest:
     redaction_counts: dict[str, int] | None = None
     optimization_hints: tuple[str, ...] = ()
     hotspots: tuple[Hotspot, ...] = ()
+    attempt_number: int = 1
+    feedback: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,9 @@ class OptimizationCandidate:
     title: str
     rationale: str
     patch: str
+    strategy: str = "unspecified"
+    expected_impact: str = ""
+    risk: str = ""
 
 
 class CandidateProvider(Protocol):
@@ -83,10 +88,15 @@ class CommandProvider:
 def _system_prompt(maximum_candidates: int) -> str:
     return (
         "You are a code performance engineer. Return only JSON with a candidates array. "
-        "Each candidate requires candidate_id, title, rationale, and a unified diff in patch. "
+        "Each candidate requires candidate_id, title, rationale, strategy, expected_impact, risk, "
+        "and a unified diff in patch. Consider algorithmic complexity, data structures, repeated "
+        "work, allocation pressure, serialization, I/O batching, and cache locality. Diversify "
+        "candidates across applicable strategies instead of returning minor variants. "
         "Use the ranked findings and optimization_hints to target measured hot paths. "
         "Prefer algorithmic or allocation reductions over cosmetic rewrites. Each candidate "
-        "must isolate one optimization so the benchmark can attribute its effect. Preserve "
+        "must isolate one optimization so the benchmark can attribute its effect. If feedback "
+        "from prior attempts is present, diagnose it and produce materially different patches. "
+        "Never weaken correctness checks or benchmark workloads. Preserve "
         "observable behavior, modify only existing supported source files, and "
         "produce at most "
         f"{maximum_candidates} independent candidates. Do not use markdown fences."

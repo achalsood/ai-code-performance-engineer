@@ -46,6 +46,7 @@ class OptimizationRun:
     winner_id: str | None
     environment: dict[str, str | int | None] | None = None
     baseline_profile: ProfileResult | None = None
+    provider_attempts: int = 1
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -185,6 +186,27 @@ def _request(
     )
 
 
+def _candidate_feedback(evaluations: list[CandidateEvaluation]) -> tuple[str, ...]:
+    feedback: list[str] = []
+    for evaluation in evaluations:
+        if evaluation.result:
+            result = evaluation.result
+            feedback.append(
+                f"{evaluation.candidate.candidate_id} ({evaluation.candidate.strategy}): "
+                f"{result.decision.value}; {result.reason}; median speedup "
+                f"{result.speedup_percent:.2f}%; CI lower bound "
+                f"{result.speedup_ci95_low:.2f}%; memory change "
+                f"{result.memory_change_percent:.2f}%; CPU change "
+                f"{result.cpu_change_percent:.2f}%."
+            )
+        else:
+            feedback.append(
+                f"{evaluation.candidate.candidate_id} ({evaluation.candidate.strategy}): "
+                f"{evaluation.status}; {evaluation.error or 'no measurement available'}."
+            )
+    return tuple(feedback[-20:])
+
+
 def optimize(
     *,
     repository: Path,
@@ -199,10 +221,13 @@ def optimize(
     maximum_memory_regression_percent: float = 10.0,
     maximum_cpu_regression_percent: float = 10.0,
     profile_guidance: bool = True,
+    maximum_provider_attempts: int = 2,
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
 ) -> OptimizationRun:
+    if maximum_provider_attempts < 1:
+        raise ValueError("maximum_provider_attempts must be at least 1")
     repository = repository.resolve()
     commit = resolve_commit(repository, baseline_ref)
     selected_runner = runner or LocalProcessRunner()
@@ -227,7 +252,45 @@ def optimize(
 
     evaluations: list[CandidateEvaluation] = []
     paired_baselines: list[BenchmarkResult] = []
-    for candidate in candidates:
+    provider_attempts = 1
+    candidate_index = 0
+    seen_patches = {hashlib.sha256(item.patch.encode()).hexdigest() for item in candidates}
+    while candidate_index < len(candidates) or provider_attempts < maximum_provider_attempts:
+        if candidate_index >= len(candidates):
+            if any(item.result and item.result.decision is Decision.ACCEPT for item in evaluations):
+                break
+            provider_attempts += 1
+            refined_request = replace(
+                request,
+                attempt_number=provider_attempts,
+                feedback=_candidate_feedback(evaluations),
+            )
+            refined = provider.generate(refined_request)
+            additions: list[OptimizationCandidate] = []
+            used_ids = {item.candidate_id for item in candidates}
+            for candidate in refined:
+                patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
+                if patch_hash in seen_patches:
+                    continue
+                seen_patches.add(patch_hash)
+                if candidate.candidate_id in used_ids:
+                    candidate = replace(
+                        candidate,
+                        candidate_id=f"attempt-{provider_attempts}-{candidate.candidate_id}",
+                    )
+                used_ids.add(candidate.candidate_id)
+                additions.append(candidate)
+            candidates.extend(additions)
+            if not additions:
+                break
+            if audit_logger:
+                audit_logger.append(
+                    "provider_refined",
+                    {"attempt": provider_attempts, "candidate_count": len(additions)},
+                )
+            continue
+        candidate = candidates[candidate_index]
+        candidate_index += 1
         try:
             with _worktree(repository, commit) as baseline_tree:
                 with _worktree(repository, commit) as candidate_tree:
@@ -329,7 +392,7 @@ def optimize(
                 policy=selected_policy,
             )
     return OptimizationRun(
-        schema_version=3,
+        schema_version=4,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -338,6 +401,7 @@ def optimize(
         winner_id=winner,
         environment=environment_fingerprint(),
         baseline_profile=baseline_profile,
+        provider_attempts=provider_attempts,
     )
 
 

@@ -17,12 +17,16 @@ def test_command_provider_parses_structured_candidates() -> None:
                 "title": "Use set",
                 "rationale": "O(1)",
                 "patch": "diff",
+                "strategy": "data-structure",
+                "expected_impact": "linear to constant lookup",
+                "risk": "low",
             }
         ]
     }
     command = [sys.executable, "-c", f"import json; print(json.dumps({payload!r}))"]
     candidates = CommandProvider(command).generate(request())
     assert candidates[0].candidate_id == "one"
+    assert candidates[0].strategy == "data-structure"
 
 
 def test_command_provider_rejects_invalid_response() -> None:
