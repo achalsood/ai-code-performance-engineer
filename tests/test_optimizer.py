@@ -26,9 +26,7 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
     )
-    subprocess.run(
-        ["git", "-C", str(repository), "config", "user.name", "Test"], check=True
-    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
     (repository / "workload.py").write_text("import time\ntime.sleep(0.10)\n")
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
@@ -44,6 +42,7 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
 
     assert result.winner_id == "fast"
     assert result.evaluations[0].status == "accept"
+    assert result.baseline_profile is not None
     record = save_optimization(result, tmp_path / "records")
     patch = export_winning_patch(result, tmp_path / "winner.patch")
     assert record.exists()

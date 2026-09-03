@@ -18,6 +18,7 @@ from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
 from .patches import PatchValidationError, apply_patch
+from .profiling import CProfileAdapter, ProfileResult, ProfilingError
 from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
 from .redaction import redact_secrets
 from .repository import resolve_commit
@@ -44,6 +45,7 @@ class OptimizationRun:
     evaluations: tuple[CandidateEvaluation, ...]
     winner_id: str | None
     environment: dict[str, str | int | None] | None = None
+    baseline_profile: ProfileResult | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -85,7 +87,12 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
             )
 
 
-def _request(repository: Path, worktree: Path, maximum_candidates: int) -> OptimizationRequest:
+def _request(
+    repository: Path,
+    worktree: Path,
+    maximum_candidates: int,
+    profile: ProfileResult | None = None,
+) -> OptimizationRequest:
     raw_findings = tuple(analyze_path(worktree))
     finding_paths = {Path(item.path) for item in raw_findings}
     supported_suffixes = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
@@ -95,7 +102,24 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         if path.suffix in supported_suffixes
         and not {".git", "node_modules", "__pycache__"}.intersection(path.parts)
     )
-    relevant_paths = list(sorted(finding_paths))
+    hotspot_paths: list[Path] = []
+    project_hotspots = []
+    if profile:
+        for hotspot in profile.hotspots:
+            candidate = Path(hotspot.file)
+            candidate = candidate if candidate.is_absolute() else worktree / candidate
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(worktree)
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file() and resolved.suffix in supported_suffixes:
+                hotspot_paths.append(resolved)
+                project_hotspots.append(
+                    replace(hotspot, file=resolved.relative_to(worktree).as_posix())
+                )
+    relevant_paths = list(dict.fromkeys(hotspot_paths))
+    relevant_paths.extend(path for path in sorted(finding_paths) if path not in relevant_paths)
     relevant_paths.extend(path for path in fallback_paths if path not in finding_paths)
     files: dict[str, str] = {}
     file_hashes: dict[str, str] = {}
@@ -131,6 +155,13 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         f"Prioritize {rule_id}: {count} occurrence(s); validate its effect in isolation."
         for rule_id, count in sorted(rule_counts.items(), key=lambda item: (-item[1], item[0]))
     )
+    if project_hotspots:
+        profile_hints = tuple(
+            f"Measured hotspot {item.file}:{item.line} {item.function}: "
+            f"{item.cumulative_seconds:.6f}s cumulative across {item.calls} call(s)."
+            for item in project_hotspots[:10]
+        )
+        optimization_hints = profile_hints + optimization_hints
     language_names = {
         "py": "python",
         "js": "javascript",
@@ -150,6 +181,7 @@ def _request(repository: Path, worktree: Path, maximum_candidates: int) -> Optim
         file_hashes=file_hashes,
         redaction_counts=redaction_counts,
         optimization_hints=optimization_hints,
+        hotspots=tuple(project_hotspots),
     )
 
 
@@ -166,6 +198,7 @@ def optimize(
     maximum_rounds: int = 21,
     maximum_memory_regression_percent: float = 10.0,
     maximum_cpu_regression_percent: float = 10.0,
+    profile_guidance: bool = True,
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
@@ -176,8 +209,20 @@ def optimize(
     selected_policy = policy or ExecutionPolicy()
     if audit_logger:
         audit_logger.append("optimization_started", {"baseline_commit": commit})
+    baseline_profile: ProfileResult | None = None
     with _worktree(repository, commit) as baseline_tree:
-        request = _request(repository, baseline_tree, maximum_candidates)
+        if (
+            profile_guidance
+            and benchmark_command
+            and "python" in Path(benchmark_command[0]).name.lower()
+        ):
+            try:
+                baseline_profile = CProfileAdapter(maximum_hotspots=20).profile(
+                    benchmark_command, cwd=baseline_tree, policy=selected_policy
+                )
+            except ProfilingError:
+                baseline_profile = None
+        request = _request(repository, baseline_tree, maximum_candidates, baseline_profile)
         candidates = provider.generate(request)
 
     evaluations: list[CandidateEvaluation] = []
@@ -284,7 +329,7 @@ def optimize(
                 policy=selected_policy,
             )
     return OptimizationRun(
-        schema_version=2,
+        schema_version=3,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -292,6 +337,7 @@ def optimize(
         evaluations=tuple(evaluations),
         winner_id=winner,
         environment=environment_fingerprint(),
+        baseline_profile=baseline_profile,
     )
 
 

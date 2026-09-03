@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from .models import Finding
+from .profiling import Hotspot
 
 
 class ProviderError(RuntimeError):
@@ -26,6 +27,7 @@ class OptimizationRequest:
     file_hashes: dict[str, str] | None = None
     redaction_counts: dict[str, int] | None = None
     optimization_hints: tuple[str, ...] = ()
+    hotspots: tuple[Hotspot, ...] = ()
 
 
 @dataclass(frozen=True)

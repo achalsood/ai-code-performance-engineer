@@ -24,6 +24,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Reproducible benchmark corpus, confidence intervals, history, and regression reports
 - Python, JavaScript, and TypeScript AST analysis plus normalized profiler adapters
 - Secret-redacted AI context, content hashes, and reproducible environment fingerprints
+- Automatic Python baseline profiling with repository-owned hotspot prioritization
 
 ## Quick start
 
@@ -128,6 +129,11 @@ perf-engineer optimize \
   --rounds 7 --maximum-rounds 21 \
   --maximum-memory-regression 10 --maximum-cpu-regression 10
 ```
+
+Python benchmark commands are profiled once before candidate generation. The provider receives
+ranked cumulative-time hotspots only for files inside the repository, and those files are placed
+first in its bounded source context. Use `--profile-guidance off` when profiling is handled
+externally or the workload cannot run under `cProfile`.
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.

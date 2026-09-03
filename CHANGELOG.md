@@ -3,6 +3,18 @@
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Automatic Python baseline profiling that prioritizes repository-owned runtime hotspots in AI
+  candidate context, with an opt-out for unsupported or externally profiled workloads.
+
+### Changed
+
+- Optimization records use schema version 3 and retain the normalized baseline profile used to
+  guide candidate generation.
+
 ## [1.0.0] - 2026-09-03
 
 ### Added
@@ -31,3 +43,4 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   conservative multi-objective candidate ranking.
 
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0
+[Unreleased]: https://github.com/achalsood/ai-code-performance-engineer/compare/v1.0.0...HEAD
