@@ -141,10 +141,15 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         self.generic_visit(node)
+        used_names = {
+            child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+        }
         new_body: list[ast.stmt] = []
         for statement_index, statement in enumerate(node.body):
             if isinstance(statement, ast.For):
-                replacement = self._rewrite_loop(statement, node.body[:statement_index])
+                replacement = self._rewrite_loop(
+                    statement, node.body[:statement_index], used_names
+                )
                 if replacement is not None:
                     setup, loop = replacement
                     new_body.extend((setup, loop))
@@ -155,7 +160,10 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         return node
 
     def _rewrite_loop(
-        self, loop: ast.For, preceding_statements: list[ast.stmt]
+        self,
+        loop: ast.For,
+        preceding_statements: list[ast.stmt],
+        used_names: set[str],
     ) -> tuple[ast.Assign, ast.For] | None:
         matches = [
             compare
@@ -179,7 +187,12 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         loop_names = {
             child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
         }
-        if collection in loop_names or _name_or_alias_is_mutated(loop, collection):
+        aliases = _aliases_before_loop(preceding_statements, collection)
+        if collection in loop_names or any(
+            _name_is_mutated(loop, alias)
+            or _name_is_passed_to_unknown_call(loop, alias)
+            for alias in aliases
+        ):
             return None
         if not all(
             _membership_probe_is_hash_safe(compare.left, loop) for compare in matches
@@ -190,16 +203,8 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         ):
             return None
 
-        used_names = {
-            child.id
-            for statement in preceding_statements
-            for child in ast.walk(statement)
-            if isinstance(child, ast.Name)
-        }
-        used_names.update(
-            child.id for child in ast.walk(loop) if isinstance(child, ast.Name)
-        )
         index_name = _fresh_generated_name("_perf_membership_", self.index, used_names)
+        used_names.add(index_name)
         self.index = int(index_name.rsplit("_", 1)[1]) + 1
         setup = ast.Assign(
             targets=[ast.Name(id=index_name, ctx=ast.Store())],
@@ -214,6 +219,28 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         ).visit(loop)
         assert isinstance(rewritten_loop, ast.For)
         return setup, rewritten_loop
+
+
+def _aliases_before_loop(
+    preceding_statements: list[ast.stmt], name: str
+) -> set[str]:
+    aliases = {name}
+    changed = True
+    while changed:
+        changed = False
+        for statement in preceding_statements:
+            for node in ast.walk(statement):
+                if (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                    and node.targets[0].id not in aliases
+                ):
+                    aliases.add(node.targets[0].id)
+                    changed = True
+    return aliases
 
 
 def _fresh_generated_name(prefix: str, start: int, used_names: set[str]) -> str:
