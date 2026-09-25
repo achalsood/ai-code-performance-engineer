@@ -241,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             benchmark_result = run_benchmark(
                 args.command,
                 cwd=args.cwd,
-                rounds=args.rounds,
+                    rounds=args.rounds,
                 warmups=args.warmups,
                 timeout=args.timeout,
             )
@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
                 baseline_cwd=args.baseline,
                 candidate_cwd=args.candidate,
                 minimum_rounds=args.rounds,
-                maximum_rounds=max(args.rounds, args.maximum_rounds),
+                    maximum_rounds=max(args.rounds, args.maximum_rounds),
                 warmups=args.warmups,
             )
             calibration_payload: dict[str, Any] = {
@@ -275,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
             profile_result = profiler.profile(
                 args.command,
                 cwd=args.cwd,
-                policy=ExecutionPolicy(
+                    policy=ExecutionPolicy(
                     timeout_seconds=args.timeout,
                     memory_bytes=args.memory_mb * 1024 * 1024,
                 ),
@@ -292,10 +292,10 @@ def main(argv: list[str] | None = None) -> int:
                 repository=args.repository,
                 baseline_ref=args.baseline_ref,
                 candidate_ref=args.candidate_ref,
-                benchmark_command=args.benchmark,
-                test_command=args.test,
+                    benchmark_command=args.benchmark,
+                    test_command=args.test,
                 rounds=args.rounds,
-                minimum_improvement_percent=args.minimum_improvement,
+                    minimum_improvement_percent=args.minimum_improvement,
             )
             destination = save_record(record, args.output)
             experiment_payload: dict[str, Any] = {
@@ -336,14 +336,14 @@ def main(argv: list[str] | None = None) -> int:
                 benchmark_command=args.benchmark,
                 test_command=args.test,
                 rounds=args.rounds,
-                maximum_candidates=args.maximum_candidates,
+                    maximum_candidates=args.maximum_candidates,
                 minimum_improvement_percent=args.minimum_improvement,
                 maximum_rounds=args.maximum_rounds,
-                maximum_memory_regression_percent=args.maximum_memory_regression,
-                maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                profile_guidance=args.profile_guidance == "auto",
-                maximum_provider_attempts=args.maximum_provider_attempts,
-                runner=runner,
+                    maximum_memory_regression_percent=args.maximum_memory_regression,
+                    maximum_cpu_regression_percent=args.maximum_cpu_regression,
+                    profile_guidance=args.profile_guidance == "auto",
+                    maximum_provider_attempts=args.maximum_provider_attempts,
+                    runner=runner,
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),
             )
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
                 maximum_provider_attempts=1,
                 runner=LocalProcessRunner(),
                 policy=policy,
-            )
+                )
             finally:
                 if fixture_repository is not None:
                     fixture_repository.cleanup()
