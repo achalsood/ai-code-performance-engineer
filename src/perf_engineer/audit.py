@@ -45,19 +45,14 @@ class AuditLogger:
 
     @staticmethod
     def _last_hash(stream: Any) -> str:
-        stream.seek(0, os.SEEK_END)
-        end = stream.tell()
-        if end == 0:
+        stream.seek(0)
+        last_line = ""
+        for line in stream:
+            if line.strip():
+                last_line = line
+        if not last_line:
             return "0" * 64
-        position = end - 1
-        while position > 0:
-            stream.seek(position)
-            if stream.read(1) == "\n" and position < end - 1:
-                break
-            position -= 1
-        stream.seek(position + 1 if position else 0)
-        line = stream.readline().strip()
-        digest = json.loads(line)["hash"]
+        digest = json.loads(last_line)["hash"]
         if not isinstance(digest, str):
             raise ValueError("invalid audit hash")
         return digest
