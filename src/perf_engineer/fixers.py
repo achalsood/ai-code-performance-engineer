@@ -181,7 +181,9 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         }
         if collection in loop_names or _name_or_alias_is_mutated(loop, collection):
             return None
-        if not all(_membership_probe_is_hash_safe(compare.left, loop) for compare in matches):
+        if not all(
+            _membership_probe_is_hash_safe(compare.left, loop) for compare in matches
+        ):
             return None
         if not _membership_collection_is_statically_hash_safe(
             preceding_statements, collection
@@ -207,7 +209,9 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
                 keywords=[],
             ),
         )
-        rewritten_loop = _MembershipCollectionReplacer(collection, index_name).visit(loop)
+        rewritten_loop = _MembershipCollectionReplacer(
+            collection, index_name
+        ).visit(loop)
         assert isinstance(rewritten_loop, ast.For)
         return setup, rewritten_loop
 
