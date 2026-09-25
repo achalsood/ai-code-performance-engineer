@@ -258,6 +258,37 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2))
             return 0 if optimization.winner_id else 2
 
+        if args.action == "arena":
+            provider: CandidateProvider
+            if args.provider_command:
+                provider = CommandProvider(args.provider_command)
+                provider_label = args.provider_label or "command-provider"
+            elif not args.model:
+                raise ValueError("--model is required with a built-in provider")
+            elif args.provider == "openai":
+                provider = OpenAICompatibleProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "https://api.openai.com/v1",
+                )
+                provider_label = args.provider_label or f"openai:{args.model}"
+            else:
+                provider = OllamaProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
+                )
+                provider_label = args.provider_label or f"ollama:{args.model}"
+            arena_run = run_agent_arena(
+                args.corpus,
+                provider=provider,
+                provider_label=provider_label,
+                rounds=args.rounds,
+                maximum_rounds=args.maximum_rounds,
+                maximum_candidates=args.maximum_candidates,
+            )
+            destination = save_agent_arena(arena_run, args.output)
+            print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
+            return 0
+
         if args.action == "evaluate":
             previous_runs = read_runs(args.history)
             evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
