@@ -43,7 +43,6 @@ def test_runner_reports_per_process_memory(tmp_path: Path) -> None:
 
 
 @pytest.mark.windows
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only test")
 def test_windows_tree_memory_does_not_sum_historical_process_peaks(tmp_path: Path) -> None:
     result = LocalProcessRunner().run(
         [
@@ -63,7 +62,6 @@ def test_windows_tree_memory_does_not_sum_historical_process_peaks(tmp_path: Pat
 
 
 @pytest.mark.posix
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 def test_posix_runner_reports_cpu_and_success(tmp_path: Path) -> None:
     result = LocalProcessRunner().run(
         [sys.executable, "-c", "sum(i * i for i in range(200_000))"],
@@ -78,7 +76,6 @@ def test_posix_runner_reports_cpu_and_success(tmp_path: Path) -> None:
 
 
 @pytest.mark.posix
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 def test_posix_platform_options_create_isolated_session() -> None:
     options = _popen_platform_options(ExecutionPolicy())
     assert options["start_new_session"] is True
@@ -86,13 +83,11 @@ def test_posix_platform_options_create_isolated_session() -> None:
 
 
 @pytest.mark.posix
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 def test_posix_resident_memory_reads_current_process() -> None:
     assert _resident_memory_bytes(__import__("os").getpid()) > 0
 
 
 @pytest.mark.posix
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 def test_posix_process_group_memory_reads_current_group() -> None:
     import os
 
