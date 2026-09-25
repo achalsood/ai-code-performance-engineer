@@ -351,3 +351,77 @@ assert len(result) == 12000
     assert evaluation.result.speedup_percent >= 5.0
     assert evaluation.result.speedup_ci95_low >= 5.0
     assert evaluation.changed_paths == ("workload.py",)
+
+
+@pytest.mark.performance
+def test_combined_plan_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+    from perf_engineer.fixers import DeterministicFixProvider
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def optimize_both():
+    values = list(range(12000))
+    membership = []
+    for query in range(6000, 18000):
+        membership.append(query in values)
+
+    ordered_source = list(range(6000, 0, -1))
+    ranked = []
+    for query in range(250):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0], ordered[-1]))
+    return membership, ranked
+
+for _ in range(2):
+    optimize_both()
+"""
+    )
+    (repository / "test_correctness.py").write_text(
+        """from workload import optimize_both
+
+membership, ranked = optimize_both()
+assert membership[0] is True
+assert membership[5999] is True
+assert membership[6000] is False
+assert membership[-1] is False
+assert len(membership) == 12000
+assert ranked[0] == (0, 1, 6000)
+assert ranked[-1] == (249, 1, 6000)
+assert len(ranked) == 250
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "test_correctness.py"],
+        rounds=5,
+        maximum_rounds=9,
+        minimum_improvement_percent=5.0,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert result.winner_id == "deterministic-1"
+    evaluation = result.evaluations[0]
+    assert evaluation.candidate.title == "Apply compatible performance fixes"
+    assert evaluation.candidate.strategy == (
+        "combined:membership-index+hoist-invariant-work"
+    )
+    assert "_perf_membership_0" in evaluation.candidate.patch
+    assert "_perf_invariant_0" in evaluation.candidate.patch
+    assert evaluation.status == "accept"
+    assert evaluation.result is not None
+    assert evaluation.result.correctness_passed
+    assert evaluation.result.speedup_percent >= 5.0
+    assert evaluation.result.speedup_ci95_low >= 5.0
+    assert evaluation.changed_paths == ("workload.py",)
