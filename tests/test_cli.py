@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from perf_engineer.cli import main
@@ -171,3 +172,74 @@ def test_cli_reports_benchmark_error(tmp_path, monkeypatch, capsys) -> None:
 
     assert main(["benchmark", "python bench.py", "--cwd", str(tmp_path)]) == 1
     assert "error: measurement failed" in capsys.readouterr().err
+
+
+def test_calibrate_command_serializes_adaptive_metadata(tmp_path, monkeypatch, capsys) -> None:
+    from perf_engineer.models import BenchmarkResult
+
+    measured = BenchmarkResult(
+        ("python",), (1.0,) * 3, 1.0, 1.0, 0.0, 1.0, 1.0,
+        calibration_probe_seconds=0.05,
+        repetitions_per_sample=2,
+        measurement_rounds=3,
+        total_measurement_seconds=1.2,
+    )
+    monkeypatch.setattr(
+        "perf_engineer.cli.run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (measured, measured),
+    )
+
+    assert main([
+        "calibrate",
+        "--baseline", str(tmp_path / "baseline"),
+        "--candidate", str(tmp_path / "candidate"),
+        "--benchmark", "python bench.py",
+        "--rounds", "3",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["calibration"]["probe_seconds"] == 0.05
+    assert payload["calibration"]["repetitions_per_sample"] == 2
+    assert payload["calibration"]["measurement_rounds"] == 3
+
+
+def test_profile_command_writes_output(tmp_path, monkeypatch, capsys) -> None:
+    class FakeProfile:
+        def to_dict(self):
+            return {"adapter": "resource", "wall_seconds": 1.0}
+
+    class FakeProfiler:
+        def profile(self, *args, **kwargs):
+            return FakeProfile()
+
+    destination = tmp_path / "reports" / "profile.json"
+    monkeypatch.setattr("perf_engineer.cli.ResourceProfiler", lambda: FakeProfiler())
+
+    assert main([
+        "profile", "python workload.py",
+        "--cwd", str(tmp_path),
+        "--output", str(destination),
+    ]) == 0
+    assert json.loads(destination.read_text())["wall_seconds"] == 1.0
+    assert json.loads(capsys.readouterr().out)["adapter"] == "resource"
+
+
+def test_profile_command_selects_cprofile_adapter(tmp_path, monkeypatch) -> None:
+    selected = {}
+
+    class FakeProfile:
+        def to_dict(self):
+            return {"adapter": "cprofile"}
+
+    class FakeProfiler:
+        def profile(self, *args, **kwargs):
+            selected["called"] = True
+            return FakeProfile()
+
+    monkeypatch.setattr("perf_engineer.cli.CProfileAdapter", lambda: FakeProfiler())
+
+    assert main([
+        "profile", "python workload.py",
+        "--cwd", str(tmp_path),
+        "--adapter", "cprofile",
+    ]) == 0
+    assert selected["called"] is True
