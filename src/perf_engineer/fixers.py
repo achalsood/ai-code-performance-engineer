@@ -287,13 +287,11 @@ def _loop_iterable_is_statically_hash_safe(iterable: ast.expr) -> bool:
             )
             for element in iterable.elts
         )
-    if (
+    return (
         isinstance(iterable, ast.Call)
         and isinstance(iterable.func, ast.Name)
         and iterable.func.id == "range"
-    ):
-        return True
-    return False
+    )
 
 
 class _MembershipCollectionReplacer(ast.NodeTransformer):
