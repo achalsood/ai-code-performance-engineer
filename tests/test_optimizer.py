@@ -149,8 +149,16 @@ assert frequencies([]) == []
         maximum_provider_attempts=1,
     )
 
-    assert result.winner_id == "deterministic-1"
     evaluation = result.evaluations[0]
+    assert result.winner_id == "deterministic-1", (
+        f"status={evaluation.status}; "
+        f"reason={evaluation.result.reason if evaluation.result else 'no verification result'}; "
+        f"speedup={evaluation.result.speedup_percent if evaluation.result else 'n/a'}; "
+        f"ci95=[{evaluation.result.speedup_ci95_low if evaluation.result else 'n/a'}, "
+        f"{evaluation.result.speedup_ci95_high if evaluation.result else 'n/a'}]; "
+        f"memory_change={evaluation.result.memory_change_percent if evaluation.result else 'n/a'}; "
+        f"cpu_change={evaluation.result.cpu_change_percent if evaluation.result else 'n/a'}"
+    )
     assert evaluation.status == "accept"
     assert evaluation.result is not None
     assert evaluation.result.correctness_passed
