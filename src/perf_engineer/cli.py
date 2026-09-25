@@ -4,6 +4,7 @@ import argparse
 import json
 import shlex
 import sys
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,37 @@ def _command(value: str) -> list[str]:
     if not command:
         raise argparse.ArgumentTypeError("command cannot be empty")
     return command
+
+
+def _fixture_repository(source: Path) -> tempfile.TemporaryDirectory[str]:
+    if not source.is_dir():
+        raise ValueError(f"fixture directory does not exist: {source}")
+    temporary = tempfile.TemporaryDirectory(prefix="perf-fixture-")
+    destination = Path(temporary.name)
+    try:
+        for item in source.iterdir():
+            if item.is_file():
+                (destination / item.name).write_bytes(item.read_bytes())
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(destination)], check=True)
+        subprocess.run(
+            ["git", "-C", str(destination), "config", "user.email", "fixture@local"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(destination), "config", "user.name", "Perf Fixture"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(destination), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(destination), "commit", "-qm", "fixture baseline"],
+            check=True,
+        )
+    except BaseException:
+        temporary.cleanup()
+        raise
+    return temporary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         "fix", help="generate and verify deterministic performance fixes"
     )
     fix.add_argument("--repository", type=Path, default=Path.cwd())
+    fix.add_argument(
+        "--fixture",
+        type=Path,
+        help="copy a benchmark fixture into a temporary Git repository before optimizing",
+    )
     fix.add_argument("--baseline-ref", default="HEAD")
     fix.add_argument("--benchmark", type=_command, required=True)
     fix.add_argument("--test", type=_command, required=True)
@@ -324,10 +361,16 @@ def main(argv: list[str] | None = None) -> int:
             policy = ExecutionPolicy(
                 timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
             )
-            optimization = optimize(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                provider=DeterministicFixProvider(),
+            fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
+            try:
+                optimization = optimize(
+                    repository=(
+                        Path(fixture_repository.name)
+                        if fixture_repository is not None
+                        else args.repository
+                    ),
+                    baseline_ref=args.baseline_ref,
+                    provider=DeterministicFixProvider(),
                 benchmark_command=args.benchmark,
                 test_command=args.test,
                 rounds=args.rounds,
@@ -341,6 +384,9 @@ def main(argv: list[str] | None = None) -> int:
                 runner=LocalProcessRunner(),
                 policy=policy,
             )
+            finally:
+                if fixture_repository is not None:
+                    fixture_repository.cleanup()
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
             fix_payload: dict[str, Any] = {
