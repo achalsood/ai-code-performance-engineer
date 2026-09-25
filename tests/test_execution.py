@@ -55,7 +55,7 @@ def test_runner_captures_stderr_and_exit_code(tmp_path: Path) -> None:
         policy=ExecutionPolicy(),
     )
     assert result.returncode == 7
-    assert result.stderr == "failure detail\n"
+    assert result.stderr.replace("\r\n", "\n") == "failure detail\n"
     assert result.wall_seconds > 0
 
 
