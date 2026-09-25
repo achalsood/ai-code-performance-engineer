@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__
+from .agent_arena import run_agent_arena, save_agent_arena
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_benchmark
@@ -108,6 +109,19 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/winner.patch")
     )
+
+    arena = subparsers.add_parser("arena", help="run a provider against PerfArena")
+    arena.add_argument("--corpus", type=Path, required=True)
+    arena_provider = arena.add_mutually_exclusive_group(required=True)
+    arena_provider.add_argument("--provider-command", type=_command)
+    arena_provider.add_argument("--provider", choices=("openai", "ollama"))
+    arena.add_argument("--model")
+    arena.add_argument("--provider-base-url")
+    arena.add_argument("--provider-label")
+    arena.add_argument("--rounds", type=int, default=7)
+    arena.add_argument("--maximum-rounds", type=int, default=21)
+    arena.add_argument("--maximum-candidates", type=int, default=3)
+    arena.add_argument("--output", type=Path, default=Path(".perf-engineer/perfarena-agent.json"))
 
     evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
     evaluate.add_argument("--corpus", type=Path, required=True)
