@@ -61,14 +61,22 @@ def sanitized_environment() -> dict[str, str]:
 
 
 def _apply_limits(policy: ExecutionPolicy) -> None:
-    import resource  # type: ignore[import-not-found]
+    import resource
 
-    resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds))
-    resource.setrlimit(resource.RLIMIT_NPROC, (policy.maximum_processes, policy.maximum_processes))
-    resource.setrlimit(
-        resource.RLIMIT_FSIZE, (policy.maximum_file_bytes, policy.maximum_file_bytes)
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds)  # type: ignore[attr-defined]
     )
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_NPROC,  # type: ignore[attr-defined]
+        (policy.maximum_processes, policy.maximum_processes),
+    )
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_FSIZE,  # type: ignore[attr-defined]
+        (policy.maximum_file_bytes, policy.maximum_file_bytes),
+    )
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_CORE, (0, 0)  # type: ignore[attr-defined]
+    )
 
 
 def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
