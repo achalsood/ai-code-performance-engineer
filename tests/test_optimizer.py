@@ -354,7 +354,7 @@ assert len(result) == 12000
 
 
 @pytest.mark.performance
-def test_combined_plan_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+def test_plan_search_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
     repository = tmp_path / "repository"
@@ -411,17 +411,24 @@ assert len(ranked) == 250
         maximum_provider_attempts=1,
     )
 
-    assert result.winner_id == "deterministic-1"
-    evaluation = result.evaluations[0]
-    assert evaluation.candidate.title == "Apply compatible performance fixes"
-    assert evaluation.candidate.strategy == (
-        "combined:membership-index+hoist-invariant-work"
-    )
-    assert "_perf_membership_0" in evaluation.candidate.patch
-    assert "_perf_invariant_0" in evaluation.candidate.patch
-    assert evaluation.status == "accept"
-    assert evaluation.result is not None
-    assert evaluation.result.correctness_passed
-    assert evaluation.result.speedup_percent >= 5.0
-    assert evaluation.result.speedup_ci95_low >= 5.0
-    assert evaluation.changed_paths == ("workload.py",)
+    assert [evaluation.candidate.strategy for evaluation in result.evaluations] == [
+        "membership-index",
+        "hoist-invariant-work",
+        "combined:membership-index+hoist-invariant-work",
+    ]
+    combined = result.evaluations[2]
+    assert "_perf_membership_0" in combined.candidate.patch
+    assert "_perf_invariant_0" in combined.candidate.patch
+    assert combined.status == "accept"
+    assert combined.result is not None
+    assert combined.result.correctness_passed
+    assert combined.result.speedup_percent >= 5.0
+    assert combined.result.speedup_ci95_low >= 5.0
+    assert combined.changed_paths == ("workload.py",)
+
+    accepted_ids = {
+        evaluation.candidate.candidate_id
+        for evaluation in result.evaluations
+        if evaluation.status == "accept"
+    }
+    assert result.winner_id in accepted_ids
