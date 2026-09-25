@@ -103,17 +103,23 @@ class _LinearCountTransformer(ast.NodeTransformer):
         ]
         if not matches:
             return None
-        collection = matches[0].func.value.id
-        if any(
-            not isinstance(call.func, ast.Attribute)
-            or not isinstance(call.func.value, ast.Name)
-            or call.func.value.id != collection
-            for call in matches
+        first_function = matches[0].func
+        if not isinstance(first_function, ast.Attribute) or not isinstance(
+            first_function.value, ast.Name
         ):
             return None
+        collection = first_function.value.id
+        for call in matches:
+            function = call.func
+            if (
+                not isinstance(function, ast.Attribute)
+                or not isinstance(function.value, ast.Name)
+                or function.value.id != collection
+            ):
+                return None
         index_name = f"_perf_counts_{self.counter_index}"
         self.counter_index += 1
-        setup = ast.Assign(
+        count_map = ast.Assign(
             targets=[ast.Name(id=index_name, ctx=ast.Store())],
             value=ast.DictComp(
                 key=ast.Name(id="_perf_item", ctx=ast.Load()),
@@ -144,9 +150,9 @@ class _LinearCountTransformer(ast.NodeTransformer):
             ],
             orelse=[],
         )
-        setup = ast.If(
+        setup: ast.stmt = ast.If(
             test=ast.Constant(value=True),
-            body=[setup, increment],
+            body=[count_map, increment],
             orelse=[],
         )
         replacer = _CountCallReplacer(collection, index_name)
