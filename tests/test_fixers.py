@@ -181,3 +181,33 @@ def test_deterministic_provider_refuses_nested_loop_without_break() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_records_passed_to_unknown_call() -> None:
+    source = """def match_records(records, queries):
+    result = []
+    for query in queries:
+        inspect_records(records)
+        for record in records:
+            if record["id"] == query["id"]:
+                result.append(record)
+                break
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                5,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Use dictionary indexing when semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
