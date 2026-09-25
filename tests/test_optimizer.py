@@ -2,6 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
@@ -105,6 +107,7 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+@pytest.mark.performance
 def test_deterministic_fixer_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -167,6 +170,7 @@ assert frequencies([]) == []
     assert evaluation.changed_paths == ("workload.py",)
 
 
+@pytest.mark.performance
 def test_invariant_hoist_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -222,6 +226,7 @@ assert rank_queries([5], [1]) == [(1, 5, 5)]
     assert evaluation.changed_paths == ("workload.py",)
 
 
+@pytest.mark.performance
 def test_batched_lookup_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -289,6 +294,7 @@ assert match_records(records, []) == []
     assert evaluation.changed_paths == ("workload.py",)
 
 
+@pytest.mark.performance
 def test_membership_index_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
