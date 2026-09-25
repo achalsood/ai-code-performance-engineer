@@ -71,13 +71,24 @@ def _rewrite_python(source: str) -> _Rewrite | None:
 
     hoist_transformer = _InvariantAllocationTransformer()
     rewritten = hoist_transformer.visit(tree)
-    if not hoist_transformer.changed:
+    if hoist_transformer.changed:
+        ast.fix_missing_locations(rewritten)
+        return _Rewrite(
+            "Hoist invariant loop work",
+            "Moves an invariant sorted() or list() allocation outside a loop.",
+            "hoist-invariant-work",
+            ast.unparse(rewritten) + "\n",
+        )
+
+    lookup_transformer = _NestedEqualityLookupTransformer()
+    rewritten = lookup_transformer.visit(tree)
+    if not lookup_transformer.changed:
         return None
     ast.fix_missing_locations(rewritten)
     return _Rewrite(
-        "Hoist invariant loop work",
-        "Moves an invariant sorted() or list() allocation outside a loop.",
-        "hoist-invariant-work",
+        "Index nested equality lookup",
+        "Builds a lookup dictionary once instead of repeatedly scanning records.",
+        "nested-loop-index",
         ast.unparse(rewritten) + "\n",
     )
 
