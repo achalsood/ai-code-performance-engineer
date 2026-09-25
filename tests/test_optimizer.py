@@ -188,7 +188,7 @@ def test_invariant_hoist_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
         result.append((query, ordered[0], ordered[-1]))
     return result
 
-values = list(range(6000, 0, -1))
+values = list(range(12000, 0, -1))
 queries = list(range(250))
 rank_queries(values, queries)
 """
