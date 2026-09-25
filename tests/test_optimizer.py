@@ -231,10 +231,9 @@ def test_nested_lookup_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
                 return record
     return None
 
-records = [{"id": value, "payload": value * 2} for value in range(12000)]
-queries = [{"id": 11999}]
-for _ in range(120):
-    find_record(records, queries)
+records = [{"id": value, "payload": value * 2} for value in range(30000)]
+queries = [{"id": 29999}]
+find_record(records, queries)
 """
     )
     (repository / "test_correctness.py").write_text(
