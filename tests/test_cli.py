@@ -41,6 +41,7 @@ def test_fix_parser_uses_local_deterministic_engine(tmp_path) -> None:
     assert args.action == "fix"
     assert args.maximum_candidates == 3
     assert args.minimum_improvement == 5.0
+    assert args.calibration_summary is False
 
 
 def test_calibrate_parser_accepts_adaptive_measurement_options(tmp_path) -> None:
@@ -65,3 +66,22 @@ def test_calibrate_parser_accepts_adaptive_measurement_options(tmp_path) -> None
     assert args.rounds == 5
     assert args.maximum_rounds == 9
     assert args.warmups == 2
+
+
+def test_fix_parser_accepts_calibration_summary(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "fix",
+            "--repository",
+            str(tmp_path),
+            "--benchmark",
+            "python workload.py",
+            "--test",
+            "pytest",
+            "--calibration-summary",
+        ]
+    )
+    assert args.action == "fix"
+    assert args.calibration_summary is True
