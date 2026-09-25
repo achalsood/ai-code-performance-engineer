@@ -15,6 +15,7 @@ from .benchmark import BenchmarkError, run_benchmark
 from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
+from .fixers import DeterministicFixProvider
 from .history import append_run, detect_regressions, read_runs
 from .optimizer import export_winning_patch, optimize, save_optimization
 from .profiling import CProfileAdapter, ProfilingError, ResourceProfiler
@@ -108,6 +109,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     optimize_parser.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/winner.patch")
+    )
+
+    fix = subparsers.add_parser(
+        "fix", help="generate and verify deterministic performance fixes"
+    )
+    fix.add_argument("--repository", type=Path, default=Path.cwd())
+    fix.add_argument("--baseline-ref", default="HEAD")
+    fix.add_argument("--benchmark", type=_command, required=True)
+    fix.add_argument("--test", type=_command, required=True)
+    fix.add_argument("--rounds", type=int, default=7)
+    fix.add_argument("--maximum-rounds", type=int, default=21)
+    fix.add_argument("--maximum-candidates", type=int, default=3)
+    fix.add_argument("--minimum-improvement", type=float, default=5.0)
+    fix.add_argument("--maximum-memory-regression", type=float, default=10.0)
+    fix.add_argument("--maximum-cpu-regression", type=float, default=10.0)
+    fix.add_argument("--timeout", type=float, default=30.0)
+    fix.add_argument("--memory-mb", type=int, default=1024)
+    fix.add_argument("--output", type=Path, default=Path(".perf-engineer/fixes"))
+    fix.add_argument(
+        "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
     )
 
     arena = subparsers.add_parser("arena", help="run a provider against PerfArena")
@@ -247,6 +268,37 @@ def main(argv: list[str] | None = None) -> int:
                 runner=runner,
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),
+            )
+            record_path = save_optimization(optimization, args.output)
+            patch_path = export_winning_patch(optimization, args.output_patch)
+            payload = {
+                **optimization.to_dict(),
+                "record_path": str(record_path),
+                "winner_patch_path": str(patch_path) if patch_path else None,
+            }
+            print(json.dumps(payload, indent=2))
+            return 0 if optimization.winner_id else 2
+
+        if args.action == "fix":
+            policy = ExecutionPolicy(
+                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+            )
+            optimization = optimize(
+                repository=args.repository,
+                baseline_ref=args.baseline_ref,
+                provider=DeterministicFixProvider(),
+                benchmark_command=args.benchmark,
+                test_command=args.test,
+                rounds=args.rounds,
+                maximum_candidates=args.maximum_candidates,
+                minimum_improvement_percent=args.minimum_improvement,
+                maximum_rounds=args.maximum_rounds,
+                maximum_memory_regression_percent=args.maximum_memory_regression,
+                maximum_cpu_regression_percent=args.maximum_cpu_regression,
+                profile_guidance=True,
+                maximum_provider_attempts=1,
+                runner=LocalProcessRunner(),
+                policy=policy,
             )
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
