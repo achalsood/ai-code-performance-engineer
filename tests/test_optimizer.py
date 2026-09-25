@@ -131,6 +131,7 @@ for _ in range(8):
 
 assert frequencies([3, 1, 3, 2, 3]) == [3, 1, 3, 1, 3]
 assert frequencies([]) == []
+assert frequencies([[1], [2], [1]]) == [2, 1, 2]
 """
     )
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
