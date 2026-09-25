@@ -417,7 +417,8 @@ def test_deterministic_provider_refuses_count_when_collection_escapes() -> None:
 
 
 def test_deterministic_provider_indexes_repeated_membership() -> None:
-    source = """def present(values, queries):
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
     result = []
     for query in queries:
         result.append(query in values)
@@ -524,3 +525,57 @@ def test_deterministic_provider_refuses_computed_membership_probe() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_for_unknown_collection_elements() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_known_hash_safe_range() -> None:
+    source = """def present(queries):
+    values = range(1000)
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
