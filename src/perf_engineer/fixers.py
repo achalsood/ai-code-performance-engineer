@@ -331,7 +331,8 @@ class _BatchedNestedLookupTransformer(ast.NodeTransformer):
                 new_body.append(statement)
                 continue
             setup, rewritten = replacement
-            new_body.extend((setup, rewritten))
+            new_body.extend(setup)
+            new_body.append(rewritten)
             self.changed = True
         node.body = new_body
         return node
