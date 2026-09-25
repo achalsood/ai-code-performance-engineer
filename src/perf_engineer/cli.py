@@ -41,6 +41,27 @@ def _command(value: str) -> list[str]:
     return command
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
 def _fixture_repository(source: Path) -> tempfile.TemporaryDirectory[str]:
     if not source.is_dir():
         raise ValueError(f"fixture directory does not exist: {source}")
@@ -86,17 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark = subparsers.add_parser("benchmark", help="measure a command")
     benchmark.add_argument("command", type=_command)
     benchmark.add_argument("--cwd", type=Path, default=Path.cwd())
-    benchmark.add_argument("--rounds", type=int, default=7)
-    benchmark.add_argument("--warmups", type=int, default=2)
-    benchmark.add_argument("--timeout", type=float, default=30.0)
+    benchmark.add_argument("--rounds", type=_positive_int, default=7)
+    benchmark.add_argument("--warmups", type=_positive_int, default=2)
+    benchmark.add_argument("--timeout", type=_positive_float, default=30.0)
 
     verify = subparsers.add_parser("verify", help="compare baseline and candidate worktrees")
     verify.add_argument("--baseline", type=Path, required=True)
     verify.add_argument("--candidate", type=Path, required=True)
     verify.add_argument("--benchmark", type=_command, required=True)
     verify.add_argument("--test", type=_command, required=True)
-    verify.add_argument("--rounds", type=int, default=7)
-    verify.add_argument("--minimum-improvement", type=float, default=5.0)
+    verify.add_argument("--rounds", type=_positive_int, default=7)
+    verify.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
 
     calibrate = subparsers.add_parser(
         "calibrate", help="inspect adaptive benchmark calibration between two worktrees"
@@ -104,9 +125,9 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--baseline", type=Path, required=True)
     calibrate.add_argument("--candidate", type=Path, required=True)
     calibrate.add_argument("--benchmark", type=_command, required=True)
-    calibrate.add_argument("--rounds", type=int, default=7)
-    calibrate.add_argument("--maximum-rounds", type=int, default=21)
-    calibrate.add_argument("--warmups", type=int, default=2)
+    calibrate.add_argument("--rounds", type=_positive_int, default=7)
+    calibrate.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    calibrate.add_argument("--warmups", type=_positive_int, default=2)
 
     experiment = subparsers.add_parser(
         "experiment", help="run a reproducible comparison between two Git revisions"
@@ -116,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--candidate-ref", required=True)
     experiment.add_argument("--benchmark", type=_command, required=True)
     experiment.add_argument("--test", type=_command, required=True)
-    experiment.add_argument("--rounds", type=int, default=7)
-    experiment.add_argument("--minimum-improvement", type=float, default=5.0)
+    experiment.add_argument("--rounds", type=_positive_int, default=7)
+    experiment.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
     experiment.add_argument("--output", type=Path, default=Path(".perf-engineer/experiments"))
 
     optimize_parser = subparsers.add_parser(
@@ -132,18 +153,18 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--provider-base-url")
     optimize_parser.add_argument("--benchmark", type=_command, required=True)
     optimize_parser.add_argument("--test", type=_command, required=True)
-    optimize_parser.add_argument("--rounds", type=int, default=7)
-    optimize_parser.add_argument("--maximum-rounds", type=int, default=21)
-    optimize_parser.add_argument("--maximum-candidates", type=int, default=3)
-    optimize_parser.add_argument("--minimum-improvement", type=float, default=5.0)
-    optimize_parser.add_argument("--maximum-memory-regression", type=float, default=10.0)
-    optimize_parser.add_argument("--maximum-cpu-regression", type=float, default=10.0)
+    optimize_parser.add_argument("--rounds", type=_positive_int, default=7)
+    optimize_parser.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    optimize_parser.add_argument("--maximum-candidates", type=_positive_int, default=3)
+    optimize_parser.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
+    optimize_parser.add_argument("--maximum-memory-regression", type=_nonnegative_float, default=10.0)
+    optimize_parser.add_argument("--maximum-cpu-regression", type=_nonnegative_float, default=10.0)
     optimize_parser.add_argument("--profile-guidance", choices=("auto", "off"), default="auto")
-    optimize_parser.add_argument("--maximum-provider-attempts", type=int, default=2)
+    optimize_parser.add_argument("--maximum-provider-attempts", type=_positive_int, default=2)
     optimize_parser.add_argument("--sandbox", choices=("local", "docker"), default="local")
     optimize_parser.add_argument("--docker-image", default="python:3.12-slim")
-    optimize_parser.add_argument("--timeout", type=float, default=30.0)
-    optimize_parser.add_argument("--memory-mb", type=int, default=1024)
+    optimize_parser.add_argument("--timeout", type=_positive_float, default=30.0)
+    optimize_parser.add_argument("--memory-mb", type=_positive_int, default=1024)
     optimize_parser.add_argument(
         "--audit-log", type=Path, default=Path(".perf-engineer/audit.jsonl")
     )
@@ -166,14 +187,14 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--baseline-ref", default="HEAD")
     fix.add_argument("--benchmark", type=_command, required=True)
     fix.add_argument("--test", type=_command, required=True)
-    fix.add_argument("--rounds", type=int, default=7)
-    fix.add_argument("--maximum-rounds", type=int, default=21)
-    fix.add_argument("--maximum-candidates", type=int, default=3)
-    fix.add_argument("--minimum-improvement", type=float, default=5.0)
-    fix.add_argument("--maximum-memory-regression", type=float, default=10.0)
-    fix.add_argument("--maximum-cpu-regression", type=float, default=10.0)
-    fix.add_argument("--timeout", type=float, default=30.0)
-    fix.add_argument("--memory-mb", type=int, default=1024)
+    fix.add_argument("--rounds", type=_positive_int, default=7)
+    fix.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    fix.add_argument("--maximum-candidates", type=_positive_int, default=3)
+    fix.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
+    fix.add_argument("--maximum-memory-regression", type=_nonnegative_float, default=10.0)
+    fix.add_argument("--maximum-cpu-regression", type=_nonnegative_float, default=10.0)
+    fix.add_argument("--timeout", type=_positive_float, default=30.0)
+    fix.add_argument("--memory-mb", type=_positive_int, default=1024)
     fix.add_argument("--output", type=Path, default=Path(".perf-engineer/fixes"))
     fix.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
@@ -192,24 +213,24 @@ def build_parser() -> argparse.ArgumentParser:
     arena.add_argument("--model")
     arena.add_argument("--provider-base-url")
     arena.add_argument("--provider-label")
-    arena.add_argument("--rounds", type=int, default=7)
-    arena.add_argument("--maximum-rounds", type=int, default=21)
-    arena.add_argument("--maximum-candidates", type=int, default=3)
+    arena.add_argument("--rounds", type=_positive_int, default=7)
+    arena.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    arena.add_argument("--maximum-candidates", type=_positive_int, default=3)
     arena.add_argument("--output", type=Path, default=Path(".perf-engineer/perfarena-agent.json"))
 
     evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
     evaluate.add_argument("--corpus", type=Path, required=True)
-    evaluate.add_argument("--rounds", type=int, default=7)
+    evaluate.add_argument("--rounds", type=_positive_int, default=7)
     evaluate.add_argument("--history", type=Path, default=Path(".perf-engineer/history.jsonl"))
     evaluate.add_argument("--report", type=Path, default=Path(".perf-engineer/report.md"))
-    evaluate.add_argument("--regression-tolerance", type=float, default=5.0)
+    evaluate.add_argument("--regression-tolerance", type=_nonnegative_float, default=5.0)
 
     profile = subparsers.add_parser("profile", help="collect normalized performance profiles")
     profile.add_argument("command", type=_command)
     profile.add_argument("--cwd", type=Path, default=Path.cwd())
     profile.add_argument("--adapter", choices=("resource", "cprofile"), default="resource")
-    profile.add_argument("--timeout", type=float, default=30.0)
-    profile.add_argument("--memory-mb", type=int, default=1024)
+    profile.add_argument("--timeout", type=_positive_float, default=30.0)
+    profile.add_argument("--memory-mb", type=_positive_int, default=1024)
     profile.add_argument("--output", type=Path)
     return parser
 
@@ -240,7 +261,7 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     benchmark_result = run_benchmark(
         args.command,
         cwd=args.cwd,
-            rounds=args.rounds,
+        rounds=args.rounds,
         warmups=args.warmups,
         timeout=args.timeout,
     )
@@ -254,7 +275,7 @@ def _run_calibrate(args: argparse.Namespace) -> int:
         baseline_cwd=args.baseline,
         candidate_cwd=args.candidate,
         minimum_rounds=args.rounds,
-            maximum_rounds=max(args.rounds, args.maximum_rounds),
+        maximum_rounds=max(args.rounds, args.maximum_rounds),
         warmups=args.warmups,
     )
     calibration_payload: dict[str, Any] = {
@@ -276,7 +297,7 @@ def _run_profile(args: argparse.Namespace) -> int:
     profile_result = profiler.profile(
         args.command,
         cwd=args.cwd,
-            policy=ExecutionPolicy(
+        policy=ExecutionPolicy(
             timeout_seconds=args.timeout,
             memory_bytes=args.memory_mb * 1024 * 1024,
         ),
@@ -294,10 +315,10 @@ def _run_experiment(args: argparse.Namespace) -> int:
         repository=args.repository,
         baseline_ref=args.baseline_ref,
         candidate_ref=args.candidate_ref,
-            benchmark_command=args.benchmark,
-            test_command=args.test,
+        benchmark_command=args.benchmark,
+        test_command=args.test,
         rounds=args.rounds,
-            minimum_improvement_percent=args.minimum_improvement,
+        minimum_improvement_percent=args.minimum_improvement,
     )
     destination = save_record(record, args.output)
     experiment_payload: dict[str, Any] = {
@@ -521,6 +542,7 @@ COMMAND_HANDLERS = {
 def _dispatch(args: argparse.Namespace) -> int:
     handler = COMMAND_HANDLERS[args.action]
     return handler(args)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
