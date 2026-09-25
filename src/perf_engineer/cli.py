@@ -8,12 +8,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__
+from .agent_arena import run_agent_arena, save_agent_arena
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_benchmark
 from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
+from .fixers import DeterministicFixProvider
 from .history import append_run, detect_regressions, read_runs
 from .optimizer import export_winning_patch, optimize, save_optimization
 from .profiling import CProfileAdapter, ProfilingError, ResourceProfiler
@@ -108,6 +110,39 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/winner.patch")
     )
+
+    fix = subparsers.add_parser(
+        "fix", help="generate and verify deterministic performance fixes"
+    )
+    fix.add_argument("--repository", type=Path, default=Path.cwd())
+    fix.add_argument("--baseline-ref", default="HEAD")
+    fix.add_argument("--benchmark", type=_command, required=True)
+    fix.add_argument("--test", type=_command, required=True)
+    fix.add_argument("--rounds", type=int, default=7)
+    fix.add_argument("--maximum-rounds", type=int, default=21)
+    fix.add_argument("--maximum-candidates", type=int, default=3)
+    fix.add_argument("--minimum-improvement", type=float, default=5.0)
+    fix.add_argument("--maximum-memory-regression", type=float, default=10.0)
+    fix.add_argument("--maximum-cpu-regression", type=float, default=10.0)
+    fix.add_argument("--timeout", type=float, default=30.0)
+    fix.add_argument("--memory-mb", type=int, default=1024)
+    fix.add_argument("--output", type=Path, default=Path(".perf-engineer/fixes"))
+    fix.add_argument(
+        "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
+    )
+
+    arena = subparsers.add_parser("arena", help="run a provider against PerfArena")
+    arena.add_argument("--corpus", type=Path, required=True)
+    arena_provider = arena.add_mutually_exclusive_group(required=True)
+    arena_provider.add_argument("--provider-command", type=_command)
+    arena_provider.add_argument("--provider", choices=("openai", "ollama"))
+    arena.add_argument("--model")
+    arena.add_argument("--provider-base-url")
+    arena.add_argument("--provider-label")
+    arena.add_argument("--rounds", type=int, default=7)
+    arena.add_argument("--maximum-rounds", type=int, default=21)
+    arena.add_argument("--maximum-candidates", type=int, default=3)
+    arena.add_argument("--output", type=Path, default=Path(".perf-engineer/perfarena-agent.json"))
 
     evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
     evaluate.add_argument("--corpus", type=Path, required=True)
@@ -243,6 +278,68 @@ def main(argv: list[str] | None = None) -> int:
             }
             print(json.dumps(payload, indent=2))
             return 0 if optimization.winner_id else 2
+
+        if args.action == "fix":
+            policy = ExecutionPolicy(
+                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+            )
+            optimization = optimize(
+                repository=args.repository,
+                baseline_ref=args.baseline_ref,
+                provider=DeterministicFixProvider(),
+                benchmark_command=args.benchmark,
+                test_command=args.test,
+                rounds=args.rounds,
+                maximum_candidates=args.maximum_candidates,
+                minimum_improvement_percent=args.minimum_improvement,
+                maximum_rounds=args.maximum_rounds,
+                maximum_memory_regression_percent=args.maximum_memory_regression,
+                maximum_cpu_regression_percent=args.maximum_cpu_regression,
+                profile_guidance=True,
+                maximum_provider_attempts=1,
+                runner=LocalProcessRunner(),
+                policy=policy,
+            )
+            record_path = save_optimization(optimization, args.output)
+            patch_path = export_winning_patch(optimization, args.output_patch)
+            payload = {
+                **optimization.to_dict(),
+                "record_path": str(record_path),
+                "winner_patch_path": str(patch_path) if patch_path else None,
+            }
+            print(json.dumps(payload, indent=2))
+            return 0 if optimization.winner_id else 2
+
+        if args.action == "arena":
+            arena_provider_instance: CandidateProvider
+            if args.provider_command:
+                arena_provider_instance = CommandProvider(args.provider_command)
+                provider_label = args.provider_label or "command-provider"
+            elif not args.model:
+                raise ValueError("--model is required with a built-in provider")
+            elif args.provider == "openai":
+                arena_provider_instance = OpenAICompatibleProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "https://api.openai.com/v1",
+                )
+                provider_label = args.provider_label or f"openai:{args.model}"
+            else:
+                arena_provider_instance = OllamaProvider(
+                    model=args.model,
+                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
+                )
+                provider_label = args.provider_label or f"ollama:{args.model}"
+            arena_run = run_agent_arena(
+                args.corpus,
+                provider=arena_provider_instance,
+                provider_label=provider_label,
+                rounds=args.rounds,
+                maximum_rounds=args.maximum_rounds,
+                maximum_candidates=args.maximum_candidates,
+            )
+            destination = save_agent_arena(arena_run, args.output)
+            print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
+            return 0
 
         if args.action == "evaluate":
             previous_runs = read_runs(args.history)

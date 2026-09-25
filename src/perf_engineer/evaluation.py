@@ -24,12 +24,24 @@ class CorpusCase:
     benchmark_command: tuple[str, ...]
     test_command: tuple[str, ...]
     minimum_improvement_percent: float = 5.0
+    category: str = "uncategorized"
+    language: str = "unknown"
 
 
 @dataclass(frozen=True)
 class CaseResult:
     case: CorpusCase
     verification: VerificationResult
+
+
+@dataclass(frozen=True)
+class CategorySummary:
+    category: str
+    total_cases: int
+    accepted_cases: int
+    correctness_rate: float
+    acceptance_rate: float
+    median_speedup_percent: float
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,7 @@ class EvaluationSummary:
     median_speedup_percent: float
     speedup_ci95_low: float
     speedup_ci95_high: float
+    categories: tuple[CategorySummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +92,22 @@ def summarize(results: list[CaseResult]) -> EvaluationSummary:
     accepted = sum(item.verification.decision is Decision.ACCEPT for item in results)
     correct = sum(item.verification.correctness_passed for item in results)
     low, high = confidence_interval(speedups)
+    category_summaries: list[CategorySummary] = []
+    for category in sorted({item.case.category for item in results}):
+        members = [item for item in results if item.case.category == category]
+        member_speedups = [item.verification.speedup_percent for item in members]
+        member_accepted = sum(item.verification.decision is Decision.ACCEPT for item in members)
+        member_correct = sum(item.verification.correctness_passed for item in members)
+        category_summaries.append(
+            CategorySummary(
+                category=category,
+                total_cases=len(members),
+                accepted_cases=member_accepted,
+                correctness_rate=member_correct / len(members) * 100,
+                acceptance_rate=member_accepted / len(members) * 100,
+                median_speedup_percent=statistics.median(member_speedups),
+            )
+        )
     return EvaluationSummary(
         total_cases=total,
         accepted_cases=accepted,
@@ -87,6 +116,7 @@ def summarize(results: list[CaseResult]) -> EvaluationSummary:
         median_speedup_percent=statistics.median(speedups) if speedups else 0.0,
         speedup_ci95_low=low,
         speedup_ci95_high=high,
+        categories=tuple(category_summaries),
     )
 
 

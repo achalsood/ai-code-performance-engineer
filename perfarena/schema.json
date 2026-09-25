@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/achalsood/ai-code-performance-engineer/perfarena/schema.json",
+  "title": "PerfArena Challenge",
+  "type": "object",
+  "required": [
+    "case_id",
+    "description",
+    "category",
+    "language",
+    "baseline_directory",
+    "candidate_directory",
+    "benchmark_command",
+    "test_command",
+    "minimum_improvement_percent"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "description": {"type": "string", "minLength": 1},
+    "category": {
+      "type": "string",
+      "enum": ["algorithms", "data-structures", "repeated-work", "parsing", "allocation", "numerical", "io", "concurrency", "runtime"]
+    },
+    "language": {"type": "string", "enum": ["python", "javascript", "typescript"]},
+    "baseline_directory": {"type": "string"},
+    "candidate_directory": {"type": "string"},
+    "benchmark_command": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "test_command": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "minimum_improvement_percent": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": false
+}
