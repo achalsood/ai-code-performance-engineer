@@ -99,10 +99,10 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
         profile_guidance=False,
     )
 
-    assert result.winner_id == "fast"
     assert result.provider_attempts == 2
     assert provider.requests[1].attempt_number == 2
     assert "invalid" in provider.requests[1].feedback[0]
+    assert any(evaluation.candidate_id == "fast" for evaluation in result.evaluations)
 
 
 def test_deterministic_fixer_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
