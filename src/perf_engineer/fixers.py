@@ -231,7 +231,10 @@ class _InvariantAllocationTransformer(ast.NodeTransformer):
         if len(calls) != 1:
             return None
         call = calls[0]
-        source_name = call.args[0].id
+        source_argument = call.args[0]
+        if not isinstance(source_argument, ast.Name):
+            return None
+        source_name = source_argument.id
         loop_names = {
             child.id
             for child in ast.walk(loop.target)
