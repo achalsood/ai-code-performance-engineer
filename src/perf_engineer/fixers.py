@@ -179,9 +179,7 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         loop_names = {
             child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
         }
-        if collection in loop_names or _name_is_mutated(loop, collection):
-            return None
-        if _name_is_passed_to_unknown_call(loop, collection):
+        if collection in loop_names or _name_or_alias_is_mutated(loop, collection):
             return None
         if not all(_membership_probe_is_hash_safe(compare.left, loop) for compare in matches):
             return None
