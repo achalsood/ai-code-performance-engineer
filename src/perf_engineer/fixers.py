@@ -61,6 +61,7 @@ def _rewrite_python(source: str) -> _Rewrite | None:
     count_transformer = _LinearCountTransformer()
     rewritten = count_transformer.visit(tree)
     if count_transformer.changed:
+        _ensure_counter_import(rewritten)
         ast.fix_missing_locations(rewritten)
         return _Rewrite(
             "Precompute repeated counts",
@@ -90,6 +91,36 @@ def _rewrite_python(source: str) -> _Rewrite | None:
         "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
         "nested-loop-index",
         ast.unparse(rewritten) + "\n",
+    )
+
+
+def _ensure_counter_import(tree: ast.AST) -> None:
+    if not isinstance(tree, ast.Module):
+        return
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.ImportFrom)
+            and statement.module == "collections"
+            and any(alias.name == "Counter" for alias in statement.names)
+        ):
+            return
+    insert_at = 0
+    if (
+        tree.body
+        and isinstance(tree.body[0], ast.Expr)
+        and isinstance(tree.body[0].value, ast.Constant)
+        and isinstance(tree.body[0].value.value, str)
+    ):
+        insert_at = 1
+    while (
+        insert_at < len(tree.body)
+        and isinstance(tree.body[insert_at], ast.ImportFrom)
+        and tree.body[insert_at].module == "__future__"
+    ):
+        insert_at += 1
+    tree.body.insert(
+        insert_at,
+        ast.ImportFrom(module="collections", names=[ast.alias(name="Counter")], level=0),
     )
 
 
@@ -141,41 +172,13 @@ class _LinearCountTransformer(ast.NodeTransformer):
                 return None
         index_name = f"_perf_counts_{self.counter_index}"
         self.counter_index += 1
-        count_map = ast.Assign(
+        setup = ast.Assign(
             targets=[ast.Name(id=index_name, ctx=ast.Store())],
-            value=ast.DictComp(
-                key=ast.Name(id="_perf_item", ctx=ast.Load()),
-                value=ast.Constant(value=0),
-                generators=[
-                    ast.comprehension(
-                        target=ast.Name(id="_perf_item", ctx=ast.Store()),
-                        iter=ast.Name(id=collection, ctx=ast.Load()),
-                        ifs=[],
-                        is_async=0,
-                    )
-                ],
+            value=ast.Call(
+                func=ast.Name(id="Counter", ctx=ast.Load()),
+                args=[ast.Name(id=collection, ctx=ast.Load())],
+                keywords=[],
             ),
-        )
-        increment = ast.For(
-            target=ast.Name(id="_perf_item", ctx=ast.Store()),
-            iter=ast.Name(id=collection, ctx=ast.Load()),
-            body=[
-                ast.AugAssign(
-                    target=ast.Subscript(
-                        value=ast.Name(id=index_name, ctx=ast.Load()),
-                        slice=ast.Name(id="_perf_item", ctx=ast.Load()),
-                        ctx=ast.Store(),
-                    ),
-                    op=ast.Add(),
-                    value=ast.Constant(value=1),
-                )
-            ],
-            orelse=[],
-        )
-        setup: ast.stmt = ast.If(
-            test=ast.Constant(value=True),
-            body=[count_map, increment],
-            orelse=[],
         )
         replacer = _CountCallReplacer(collection, index_name)
         rewritten_loop = replacer.visit(loop)
