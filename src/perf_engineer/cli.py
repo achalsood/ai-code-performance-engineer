@@ -4,6 +4,7 @@ import argparse
 import json
 import shlex
 import sys
+from typing import Any
 from dataclasses import asdict
 from pathlib import Path
 
@@ -214,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
                 maximum_rounds=max(args.rounds, args.maximum_rounds),
                 warmups=args.warmups,
             )
-            payload = {
+            payload: dict[str, Any] = {
                 "calibration": {
                     "probe_seconds": baseline.calibration_probe_seconds,
                     "repetitions_per_sample": baseline.repetitions_per_sample,
@@ -255,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 minimum_improvement_percent=args.minimum_improvement,
             )
             destination = save_record(record, args.output)
-            payload = {**record.to_dict(), "record_path": str(destination)}
+            payload: dict[str, Any] = {**record.to_dict(), "record_path": str(destination)}
             print(json.dumps(payload, indent=2))
             return 0 if record.result.decision == "accept" else 2
 
@@ -303,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
-            payload = {
+            payload: dict[str, Any] = {
                 **optimization.to_dict(),
                 "record_path": str(record_path),
                 "winner_patch_path": str(patch_path) if patch_path else None,
@@ -334,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
-            payload = {
+            payload: dict[str, Any] = {
                 **optimization.to_dict(),
                 "record_path": str(record_path),
                 "winner_patch_path": str(patch_path) if patch_path else None,
@@ -388,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             append_run(args.history, evaluation)
             args.report.parent.mkdir(parents=True, exist_ok=True)
             args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
-            payload = {
+            payload: dict[str, Any] = {
                 **evaluation.to_dict(),
                 "regressions": [asdict(item) for item in regressions],
                 "report_path": str(args.report),
