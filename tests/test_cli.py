@@ -85,3 +85,22 @@ def test_fix_parser_accepts_calibration_summary(tmp_path) -> None:
     )
     assert args.action == "fix"
     assert args.calibration_summary is True
+
+
+def test_fix_parser_accepts_fixture_directory(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    fixture = tmp_path / "fixture"
+    args = build_parser().parse_args(
+        [
+            "fix",
+            "--fixture",
+            str(fixture),
+            "--benchmark",
+            "python workload.py",
+            "--test",
+            "python test_correctness.py",
+        ]
+    )
+    assert args.action == "fix"
+    assert args.fixture == fixture
