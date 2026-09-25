@@ -272,3 +272,57 @@ def frequencies(items):
     patch = DeterministicFixProvider().generate(request)[0].patch
     assert "+from collections import Counter" not in patch
     assert "+    _perf_counts_0 = Counter(items)" in patch
+
+
+def test_deterministic_provider_refuses_count_when_collection_mutates() -> None:
+    source = """def frequencies(items, queries):
+    result = []
+    for query in queries:
+        result.append(items.count(query))
+        items.append(query)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF003",
+                "example.py",
+                4,
+                "high",
+                ".count() performs a linear scan inside a loop.",
+                "Precompute a lookup dictionary or set.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_count_when_collection_escapes() -> None:
+    source = """def frequencies(items, queries):
+    result = []
+    for query in queries:
+        inspect_items(items)
+        result.append(items.count(query))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF003",
+                "example.py",
+                5,
+                "high",
+                ".count() performs a linear scan inside a loop.",
+                "Precompute a lookup dictionary or set.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
