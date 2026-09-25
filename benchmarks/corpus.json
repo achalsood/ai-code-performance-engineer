@@ -1,5 +1,5 @@
 {
-  "suite_name": "PerfArena 10-case optimization corpus",
+  "suite_name": "PerfArena 20-case optimization corpus",
   "cases": [
     {
       "case_id": "membership-index",
@@ -168,6 +168,176 @@
       "test_command": [
         "python",
         "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "counter-frequency",
+      "description": "Replace repeated list.count scans with a single frequency index.",
+      "category": "data-structures",
+      "language": "python",
+      "baseline_directory": "counter-frequency/baseline",
+      "candidate_directory": "counter-frequency/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "string-builder-join",
+      "description": "Replace repeated immutable string concatenation with list accumulation and join.",
+      "category": "allocation",
+      "language": "python",
+      "baseline_directory": "string-builder-join/baseline",
+      "candidate_directory": "string-builder-join/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "bytes-builder-bytearray",
+      "description": "Use bytearray for incremental binary construction instead of immutable bytes concatenation.",
+      "category": "allocation",
+      "language": "python",
+      "baseline_directory": "bytes-builder-bytearray/baseline",
+      "candidate_directory": "bytes-builder-bytearray/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "csv-split-once",
+      "description": "Parse each delimited row once instead of repeatedly splitting the same string.",
+      "category": "parsing",
+      "language": "python",
+      "baseline_directory": "csv-split-once/baseline",
+      "candidate_directory": "csv-split-once/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "minmax-single-pass",
+      "description": "Compute minimum and maximum in one traversal rather than sorting the entire collection.",
+      "category": "algorithms",
+      "language": "python",
+      "baseline_directory": "minmax-single-pass/baseline",
+      "candidate_directory": "minmax-single-pass/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "top-k-heap",
+      "description": "Use a bounded heap for top-k selection instead of sorting all values.",
+      "category": "algorithms",
+      "language": "python",
+      "baseline_directory": "top-k-heap/baseline",
+      "candidate_directory": "top-k-heap/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "generator-sum",
+      "description": "Avoid an intermediate list when reducing generated numeric values.",
+      "category": "allocation",
+      "language": "python",
+      "baseline_directory": "generator-sum/baseline",
+      "candidate_directory": "generator-sum/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "casefold-query-hoist",
+      "description": "Normalize an invariant query once rather than once per candidate string.",
+      "category": "repeated-work",
+      "language": "python",
+      "baseline_directory": "casefold-query-hoist/baseline",
+      "candidate_directory": "casefold-query-hoist/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "js-string-builder-join",
+      "description": "Replace repeated JavaScript string concatenation with array join.",
+      "category": "allocation",
+      "language": "javascript",
+      "baseline_directory": "js-string-builder-join/baseline",
+      "candidate_directory": "js-string-builder-join/candidate",
+      "benchmark_command": [
+        "node",
+        "workload.js"
+      ],
+      "test_command": [
+        "node",
+        "test_correctness.js"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "js-map-index",
+      "description": "Index JavaScript records with Map instead of repeatedly scanning with find.",
+      "category": "data-structures",
+      "language": "javascript",
+      "baseline_directory": "js-map-index/baseline",
+      "candidate_directory": "js-map-index/candidate",
+      "benchmark_command": [
+        "node",
+        "workload.js"
+      ],
+      "test_command": [
+        "node",
+        "test_correctness.js"
       ],
       "minimum_improvement_percent": 5
     }
