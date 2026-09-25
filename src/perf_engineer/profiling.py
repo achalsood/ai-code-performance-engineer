@@ -81,7 +81,7 @@ class CProfileAdapter:
                 raise ProfilingError(
                     f"profiled command exited with {measured.returncode}: {measured.stderr}"
                 )
-            statistics = pstats.Stats(profile_path)
+            statistics = pstats.Stats(str(profile_path))
             raw_statistics = cast(
                 dict[tuple[str, int, str], tuple[int, int, float, float, dict[Any, Any]]],
                 statistics.stats,  # type: ignore[attr-defined]
