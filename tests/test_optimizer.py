@@ -291,24 +291,26 @@ def test_membership_index_closes_analyze_fix_verify_loop(tmp_path: Path) -> None
     )
     subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
     (repository / "workload.py").write_text(
-        """def present(queries):
+        """def present():
     values = list(range(12000))
     result = []
-    for query in queries:
+    for query in range(6000, 18000):
         result.append(query in values)
     return result
 
-queries = list(range(6000, 18000))
 for _ in range(3):
-    present(queries)
+    present()
 """
     )
     (repository / "test_correctness.py").write_text(
         """from workload import present
 
-assert present([3, 12000, 1]) == [True, False, True]
-assert present([-1, 12000]) == [False, False]
-assert present([]) == []
+result = present()
+assert result[0] is True
+assert result[5999] is True
+assert result[6000] is False
+assert result[-1] is False
+assert len(result) == 12000
 """
     )
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
