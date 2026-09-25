@@ -243,3 +243,53 @@ def test_profile_command_selects_cprofile_adapter(tmp_path, monkeypatch) -> None
         "--adapter", "cprofile",
     ]) == 0
     assert selected["called"] is True
+
+
+def test_experiment_command_saves_record_and_returns_accept(tmp_path, monkeypatch, capsys) -> None:
+    from types import SimpleNamespace
+
+    class FakeRecord:
+        result = SimpleNamespace(decision="accept")
+
+        def to_dict(self):
+            return {"experiment_id": "exp-1", "result": {"decision": "accept"}}
+
+    monkeypatch.setattr("perf_engineer.cli.run_experiment", lambda **kwargs: FakeRecord())
+    destination = tmp_path / "records" / "exp-1.json"
+    monkeypatch.setattr("perf_engineer.cli.save_record", lambda record, output: destination)
+
+    assert main([
+        "experiment",
+        "--repository", str(tmp_path),
+        "--baseline-ref", "main~1",
+        "--candidate-ref", "main",
+        "--benchmark", "python bench.py",
+        "--test", "pytest",
+        "--output", str(tmp_path / "records"),
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["experiment_id"] == "exp-1"
+    assert payload["record_path"] == str(destination)
+
+
+def test_verify_command_returns_rejection_status(tmp_path, monkeypatch, capsys) -> None:
+    from types import SimpleNamespace
+    from perf_engineer.models import BenchmarkResult
+
+    measured = BenchmarkResult(("python",), (1.0,) * 3, 1.0, 1.0, 0.0, 1.0, 1.0)
+    verification = SimpleNamespace(
+        decision="reject",
+        to_dict=lambda: {"decision": "reject", "reason": "not faster"},
+    )
+    monkeypatch.setattr("perf_engineer.cli.run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr("perf_engineer.cli.run_benchmark", lambda *args, **kwargs: measured)
+    monkeypatch.setattr("perf_engineer.cli.compare", lambda *args, **kwargs: verification)
+
+    assert main([
+        "verify",
+        "--baseline", str(tmp_path / "baseline"),
+        "--candidate", str(tmp_path / "candidate"),
+        "--benchmark", "python bench.py",
+        "--test", "pytest",
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["decision"] == "reject"
