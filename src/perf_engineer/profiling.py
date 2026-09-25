@@ -72,14 +72,16 @@ class CProfileAdapter:
     ) -> ProfileResult:
         if not command or "python" not in Path(command[0]).name.lower():
             raise ProfilingError("cProfile requires a Python command")
-        with tempfile.NamedTemporaryFile(suffix=".prof") as profile_file:
-            wrapped = [command[0], "-m", "cProfile", "-o", profile_file.name, *command[1:]]
+        profile_path = Path(tempfile.mkstemp(suffix=".prof")[1])
+        profile_path.unlink(missing_ok=True)
+        try:
+            wrapped = [command[0], "-m", "cProfile", "-o", str(profile_path), *command[1:]]
             measured = self.runner.run(wrapped, cwd=cwd, policy=policy)
             if measured.returncode:
                 raise ProfilingError(
                     f"profiled command exited with {measured.returncode}: {measured.stderr}"
                 )
-            statistics = pstats.Stats(profile_file.name)
+            statistics = pstats.Stats(profile_path)
             raw_statistics = cast(
                 dict[tuple[str, int, str], tuple[int, int, float, float, dict[Any, Any]]],
                 statistics.stats,  # type: ignore[attr-defined]
@@ -98,6 +100,8 @@ class CProfileAdapter:
                 ),
                 key=lambda item: (-item.cumulative_seconds, -item.self_seconds, item.function),
             )[: self.maximum_hotspots]
+        finally:
+            profile_path.unlink(missing_ok=True)
         return ProfileResult(
             "cprofile",
             tuple(command),
