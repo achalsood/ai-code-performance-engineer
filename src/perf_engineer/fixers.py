@@ -190,8 +190,11 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         ):
             return None
 
-        index_name = f"_perf_membership_{self.index}"
-        self.index += 1
+        used_names = {
+            child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+        }
+        index_name = _fresh_generated_name("_perf_membership_", self.index, used_names)
+        self.index = int(index_name.rsplit("_", 1)[1]) + 1
         setup = ast.Assign(
             targets=[ast.Name(id=index_name, ctx=ast.Store())],
             value=ast.Call(
@@ -203,6 +206,13 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         rewritten_loop = _MembershipCollectionReplacer(collection, index_name).visit(loop)
         assert isinstance(rewritten_loop, ast.For)
         return setup, rewritten_loop
+
+
+def _fresh_generated_name(prefix: str, start: int, used_names: set[str]) -> str:
+    index = start
+    while f"{prefix}{index}" in used_names:
+        index += 1
+    return f"{prefix}{index}"
 
 
 def _membership_collection_is_statically_hash_safe(
