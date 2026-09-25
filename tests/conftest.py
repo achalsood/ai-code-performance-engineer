@@ -19,6 +19,7 @@ def _exclude_incompatible_execution_coverage(config: pytest.Config) -> None:
     coverage.set_option("report:exclude_lines", [*excluded, platform_pattern])
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionstart(session: pytest.Session) -> None:
     _exclude_incompatible_execution_coverage(session.config)
 
