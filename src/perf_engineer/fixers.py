@@ -169,6 +169,10 @@ class _LinearCountTransformer(ast.NodeTransformer):
                 or function.value.id != collection
             ):
                 return None
+        if _name_is_mutated(loop, collection):
+            return None
+        if _name_is_passed_to_unknown_call(loop, collection):
+            return None
         index_name = f"_perf_counts_{self.counter_index}"
         self.counter_index += 1
         setup = ast.Assign(
