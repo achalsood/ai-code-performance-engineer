@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 
 class ExecutionError(RuntimeError):
@@ -63,26 +63,28 @@ def sanitized_environment() -> dict[str, str]:
 def _apply_limits(policy: ExecutionPolicy) -> None:
     import resource
 
-    resource.setrlimit(
-        resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds)
+    resource_api = cast(Any, resource)
+    resource_api.setrlimit(
+        resource_api.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds)
     )
-    resource.setrlimit(
-        resource.RLIMIT_NPROC,
+    resource_api.setrlimit(
+        resource_api.RLIMIT_NPROC,
         (policy.maximum_processes, policy.maximum_processes),
     )
-    resource.setrlimit(
-        resource.RLIMIT_FSIZE,
+    resource_api.setrlimit(
+        resource_api.RLIMIT_FSIZE,
         (policy.maximum_file_bytes, policy.maximum_file_bytes),
     )
-    resource.setrlimit(
-        resource.RLIMIT_CORE, (0, 0)
+    resource_api.setrlimit(
+        resource_api.RLIMIT_CORE, (0, 0)
     )
 
 
 def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
     if os.name == "posix":
         return {"start_new_session": True, "preexec_fn": lambda: _apply_limits(policy)}
-    return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    subprocess_api = cast(Any, subprocess)
+    return {"creationflags": subprocess_api.CREATE_NEW_PROCESS_GROUP}
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
@@ -90,7 +92,9 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
         import signal
 
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+            os_api = cast(Any, os)
+            signal_api = cast(Any, signal)
+            os_api.killpg(process.pid, signal_api.SIGKILL)
         return
     with contextlib.suppress(ProcessLookupError):
         process.kill()
@@ -115,8 +119,8 @@ def _resident_memory_bytes(process_id: int) -> int:
                 ("PeakPagefileUsage", ctypes.c_ulonglong),
             ]
 
-        kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
-        psapi = getattr(ctypes, "WinDLL")("psapi", use_last_error=True)
+        kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+        psapi = cast(Any, ctypes).WinDLL("psapi", use_last_error=True)
         kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -179,8 +183,8 @@ def _resident_working_set_bytes(process_id: int) -> int:
             ("PeakPagefileUsage", ctypes.c_ulonglong),
         ]
 
-    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
-    psapi = getattr(ctypes, "WinDLL")("psapi", use_last_error=True)
+    kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+    psapi = cast(Any, ctypes).WinDLL("psapi", use_last_error=True)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -222,7 +226,7 @@ def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
             ("szExeFile", wintypes.WCHAR * 260),
         ]
 
-    kernel32 = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+    kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
     kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
     kernel32.Process32FirstW.argtypes = [
@@ -327,7 +331,8 @@ class LocalProcessRunner:
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
             if os.name == "posix":
-                _, status, child_usage = os.wait4(process.pid, 0)
+                os_api = cast(Any, os)
+                _, status, child_usage = os_api.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(status)
                 cpu_seconds = child_usage.ru_utime + child_usage.ru_stime
                 peak_memory_bytes = max(
