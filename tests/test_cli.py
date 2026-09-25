@@ -1,3 +1,5 @@
+import pytest
+
 from perf_engineer.cli import main
 
 
@@ -104,3 +106,46 @@ def test_fix_parser_accepts_fixture_directory(tmp_path) -> None:
     )
     assert args.action == "fix"
     assert args.fixture == fixture
+
+
+def test_command_rejects_empty_value() -> None:
+    import argparse
+
+    from perf_engineer.cli import _command
+
+    with pytest.raises(argparse.ArgumentTypeError, match="cannot be empty"):
+        _command("   ")
+
+
+def test_analyze_json_writes_output_and_honors_fail_threshold(tmp_path, monkeypatch) -> None:
+    from perf_engineer.models import Finding
+
+    destination = tmp_path / "reports" / "findings.json"
+    finding = Finding(
+        path="slow.py",
+        line=3,
+        rule_id="PERF999",
+        severity="high",
+        message="slow path",
+        suggestion="make it faster",
+    )
+    monkeypatch.setattr("perf_engineer.cli.analyze_path", lambda path: [finding])
+
+    assert main(
+        [
+            "analyze", str(tmp_path), "--format", "json", "--output", str(destination),
+            "--fail-on", "high",
+        ]
+    ) == 4
+    assert '"rule_id": "PERF999"' in destination.read_text(encoding="utf-8")
+
+
+def test_analyze_sarif_prints_serialized_report(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr("perf_engineer.cli.analyze_path", lambda path: [])
+    monkeypatch.setattr(
+        "perf_engineer.cli.findings_to_sarif",
+        lambda findings: {"version": "2.1.0", "runs": []},
+    )
+
+    assert main(["analyze", str(tmp_path), "--format", "sarif"]) == 0
+    assert '"version": "2.1.0"' in capsys.readouterr().out
