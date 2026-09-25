@@ -19,6 +19,4 @@ def pytest_ignore_collect(collection_path) -> bool:
     name = collection_path.name
     if name.endswith("_windows.py") and sys.platform != "win32":
         return True
-    if name.endswith("_posix.py") and os.name != "posix":
-        return True
-    return False
+    return name.endswith("_posix.py") and os.name != "posix"
