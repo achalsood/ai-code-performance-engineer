@@ -138,7 +138,14 @@ def _resident_memory_bytes(process_id: int) -> int:
                 handle, ctypes.byref(counters), counters.cb
             ):
                 return 0
-            return int(max(counters.PeakWorkingSetSize, counters.PeakPagefileUsage, counters.WorkingSetSize, counters.PagefileUsage))
+            return int(
+                max(
+                    counters.PeakWorkingSetSize,
+                    counters.PeakPagefileUsage,
+                    counters.WorkingSetSize,
+                    counters.PagefileUsage,
+                )
+            )
         finally:
             kernel32.CloseHandle(handle)
     try:
