@@ -13,3 +13,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(windows_only)
         if "posix" in item.keywords and os.name != "posix":
             item.add_marker(posix_only)
+
+
+def pytest_ignore_collect(collection_path) -> bool:
+    name = collection_path.name
+    if name.endswith("_windows.py") and sys.platform != "win32":
+        return True
+    if name.endswith("_posix.py") and os.name != "posix":
+        return True
+    return False
