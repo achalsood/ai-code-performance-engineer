@@ -202,9 +202,75 @@ def _windows_memory_counters(process_id: int) -> dict[str, int]:
         kernel32.CloseHandle(handle)
 
 
+def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
+    """Return the live Windows process tree rooted at *root_process_id*."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessEntry32),
+    ]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessEntry32),
+    ]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+    invalid_handle = ctypes.c_void_p(-1).value
+    if snapshot == invalid_handle:
+        return {root_process_id}
+    try:
+        children: dict[int, list[int]] = {}
+        entry = ProcessEntry32()
+        entry.dwSize = ctypes.sizeof(entry)
+        if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            while True:
+                children.setdefault(int(entry.th32ParentProcessID), []).append(
+                    int(entry.th32ProcessID)
+                )
+                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                    break
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+    process_ids = {root_process_id}
+    pending = [root_process_id]
+    while pending:
+        parent = pending.pop()
+        for child in children.get(parent, []):
+            if child not in process_ids:
+                process_ids.add(child)
+                pending.append(child)
+    return process_ids
+
+
 def _process_group_memory_bytes(process_group_id: int) -> int:
     if os.name == "nt":
-        return _resident_memory_bytes(process_group_id)
+        return sum(
+            _resident_memory_bytes(process_id)
+            for process_id in _windows_descendant_process_ids(process_group_id)
+        )
     total = 0
     try:
         process_directories = (path for path in Path("/proc").iterdir() if path.name.isdigit())
