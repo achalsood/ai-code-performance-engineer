@@ -421,7 +421,14 @@ def _lookup_keys(test: ast.expr, record: str, query: str) -> tuple[str, str] | N
         (_subscript_key(test.left, record), _subscript_key(test.comparators[0], query)),
         (_subscript_key(test.comparators[0], record), _subscript_key(test.left, query)),
     )
-    return next(((record_key, query_key) for record_key, query_key in pairs if record_key and query_key), None)
+    return next(
+        (
+            (record_key, query_key)
+            for record_key, query_key in pairs
+            if record_key and query_key
+        ),
+        None,
+    )
 
 
 def _subscript_key(expression: ast.expr, variable: str) -> str | None:
