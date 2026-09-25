@@ -554,10 +554,10 @@ def test_deterministic_provider_refuses_membership_for_unknown_collection_elemen
 
 
 def test_deterministic_provider_indexes_known_hash_safe_range() -> None:
-    source = """def present(queries):
-    values = range(1000)
+    source = """def present():
+    values = list(range(1000))
     result = []
-    for query in queries:
+    for query in range(2000):
         result.append(query in values)
     return result
 """
@@ -582,11 +582,11 @@ def test_deterministic_provider_indexes_known_hash_safe_range() -> None:
 
 
 def test_deterministic_provider_avoids_membership_index_name_collision() -> None:
-    source = """def present(queries):
+    source = """def present():
     values = [1, 2, 3, 4, 5]
     _perf_membership_0 = "preserve-me"
     result = []
-    for query in queries:
+    for query in range(10):
         result.append((query in values, _perf_membership_0))
     return result
 """
