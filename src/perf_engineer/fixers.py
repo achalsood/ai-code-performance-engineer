@@ -259,9 +259,12 @@ class _InvariantAllocationTransformer(ast.NodeTransformer):
         }
         if source_name in loop_names or _name_is_mutated(loop, source_name):
             return None
-        if not _call_is_direct_assignment_value(loop, call):
+        assignment_target = _direct_assignment_target(loop, call)
+        if assignment_target is None:
             return None
         if _name_is_passed_to_unknown_call(loop, source_name, ignored_call=call):
+            return None
+        if _name_is_mutated(loop, assignment_target):
             return None
 
         hoisted_name = f"_perf_invariant_{self.hoist_index}"
@@ -279,14 +282,16 @@ class _InvariantAllocationTransformer(ast.NodeTransformer):
         return setup, rewritten_loop
 
 
-def _call_is_direct_assignment_value(loop: ast.For, call: ast.Call) -> bool:
-    return any(
-        isinstance(statement, ast.Assign)
-        and statement.value is call
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        for statement in loop.body
-    )
+def _direct_assignment_target(loop: ast.For, call: ast.Call) -> str | None:
+    for statement in loop.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and statement.value is call
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            return statement.targets[0].id
+    return None
 
 
 class _SpecificCallReplacer(ast.NodeTransformer):
