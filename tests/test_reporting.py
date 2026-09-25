@@ -12,7 +12,7 @@ def test_markdown_report_renders_summary_and_no_regressions() -> None:
         12.5,
         8.0,
         17.0,
-        (CategorySummary("loops", 1, 100.0, 50.0, 12.5),),
+        (CategorySummary("loops", 1, 1, 100.0, 50.0, 12.5),),
     )
     run = EvaluationRun(1, "cross-platform", "now", (), summary)
 
