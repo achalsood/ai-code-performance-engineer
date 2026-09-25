@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import statistics
 import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from .benchmark import run_adaptive_paired_benchmarks
 from .evaluation import CorpusCase, load_corpus
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import Decision
-from .patches import PatchValidationError, apply_patch
+from .patches import PatchValidationError, apply_patch, validate_patch
 from .providers import CandidateProvider, OptimizationRequest, ProviderError
 from .verification import compare, run_correctness
 
@@ -38,7 +39,45 @@ class AgentArenaRun:
     results: tuple[AgentCaseResult, ...]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["summary"] = self.summary()
+        return payload
+
+    def summary(self) -> dict[str, Any]:
+        total = len(self.results)
+        statuses = {
+            status: sum(result.status == status for result in self.results)
+            for status in (
+                "accepted",
+                "rejected",
+                "inconclusive",
+                "correctness-failure",
+                "invalid",
+                "provider-failure",
+            )
+        }
+        accepted_speedups = [
+            result.speedup_percent
+            for result in self.results
+            if result.status == "accepted" and result.speedup_percent is not None
+        ]
+        return {
+            "total_cases": total,
+            "status_counts": statuses,
+            "correctness_rate": (
+                sum(
+                    result.status in {"accepted", "rejected", "inconclusive"}
+                    for result in self.results
+                )
+                / total
+                if total
+                else 0.0
+            ),
+            "acceptance_rate": statuses["accepted"] / total if total else 0.0,
+            "median_accepted_speedup_percent": (
+                statistics.median(accepted_speedups) if accepted_speedups else None
+            ),
+        }
 
 
 def _request(case: CorpusCase, baseline: Path, maximum_candidates: int) -> OptimizationRequest:
@@ -63,6 +102,22 @@ def _request(case: CorpusCase, baseline: Path, maximum_candidates: int) -> Optim
         maximum_candidates=maximum_candidates,
         optimization_hints=(f"Category: {case.category}",),
     )
+
+
+def _validate_agent_patch(patch: str) -> None:
+    protected_names = {
+        "workload.py",
+        "workload.js",
+        "test_correctness.py",
+        "test_correctness.js",
+    }
+    paths = validate_patch(patch)
+    protected = [path for path in paths if Path(path).name in protected_names]
+    if protected:
+        raise PatchValidationError(
+            "agent patches cannot modify benchmark or correctness files: "
+            + ", ".join(protected)
+        )
 
 
 def run_agent_arena(
@@ -106,6 +161,7 @@ def run_agent_arena(
                 with tempfile.TemporaryDirectory(prefix=f"perfarena-{case.case_id}-") as directory:
                     candidate_dir = Path(directory) / "candidate"
                     shutil.copytree(baseline, candidate_dir)
+                    _validate_agent_patch(candidate.patch)
                     apply_patch(candidate_dir, candidate.patch)
                     correct = run_correctness(
                         list(case.test_command),
@@ -141,11 +197,12 @@ def run_agent_arena(
                             minimum_improvement_percent=case.minimum_improvement_percent,
                             paired=True,
                         )
-                        status = (
-                            "accepted"
-                            if verification.decision is Decision.ACCEPT
-                            else "rejected"
-                        )
+                        if verification.decision is Decision.ACCEPT:
+                            status = "accepted"
+                        elif verification.decision is Decision.INCONCLUSIVE:
+                            status = "inconclusive"
+                        else:
+                            status = "rejected"
                         result = AgentCaseResult(
                             case.case_id, case.category, case.language, status,
                             candidate.candidate_id, verification.speedup_percent,
