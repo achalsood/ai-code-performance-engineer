@@ -4,9 +4,9 @@ import argparse
 import json
 import shlex
 import sys
-from typing import Any
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .agent_arena import run_agent_arena, save_agent_arena
@@ -256,7 +256,10 @@ def main(argv: list[str] | None = None) -> int:
                 minimum_improvement_percent=args.minimum_improvement,
             )
             destination = save_record(record, args.output)
-            experiment_payload: dict[str, Any] = {**record.to_dict(), "record_path": str(destination)}
+            experiment_payload: dict[str, Any] = {
+                **record.to_dict(),
+                "record_path": str(destination),
+            }
             print(json.dumps(experiment_payload, indent=2))
             return 0 if record.result.decision == "accept" else 2
 
