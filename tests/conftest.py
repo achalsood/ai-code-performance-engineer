@@ -4,26 +4,6 @@ import sys
 import pytest
 
 
-def _exclude_incompatible_execution_coverage(config: pytest.Config) -> None:
-    """Exclude execution.py branches that cannot run on this host platform."""
-    cov_plugin = config.pluginmanager.getplugin("_cov")
-    if cov_plugin is None or cov_plugin.cov_controller is None:
-        return
-    coverage = cov_plugin.cov_controller.cov
-    excluded = list(coverage.get_option("report:exclude_lines") or [])
-    platform_pattern = (
-        r"^\s*if os\.name == [\"']posix[\"']:"
-        if os.name != "posix"
-        else r"^\s*(?:if|elif) os\.name == [\"']nt[\"']:"
-    )
-    coverage.set_option("report:exclude_lines", [*excluded, platform_pattern])
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_sessionstart(session: pytest.Session) -> None:
-    _exclude_incompatible_execution_coverage(session.config)
-
-
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     windows_only = pytest.mark.skip(reason="Windows-only test")
     posix_only = pytest.mark.skip(reason="POSIX-only test")
