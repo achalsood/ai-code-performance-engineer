@@ -80,7 +80,17 @@ def _rewrite_python(source: str) -> _Rewrite | None:
             ast.unparse(rewritten) + "\n",
         )
 
-    return None
+    lookup_transformer = _BatchedNestedLookupTransformer()
+    rewritten = lookup_transformer.visit(tree)
+    if not lookup_transformer.changed:
+        return None
+    ast.fix_missing_locations(rewritten)
+    return _Rewrite(
+        "Index repeated nested lookup",
+        "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
+        "nested-loop-index",
+        ast.unparse(rewritten) + "\n",
+    )
 
 
 class _LinearCountTransformer(ast.NodeTransformer):
@@ -299,3 +309,167 @@ def _name_is_mutated(loop: ast.For, name: str) -> bool:
         ):
             return True
     return False
+
+
+class _BatchedNestedLookupTransformer(ast.NodeTransformer):
+    """Index a narrow nested-loop append pattern while preserving first-match semantics."""
+
+    def __init__(self) -> None:
+        self.changed = False
+        self.index = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        new_body: list[ast.stmt] = []
+        for statement in node.body:
+            replacement = (
+                self._rewrite_outer_loop(statement)
+                if isinstance(statement, ast.For)
+                else None
+            )
+            if replacement is None:
+                new_body.append(statement)
+                continue
+            setup, rewritten = replacement
+            new_body.extend((setup, rewritten))
+            self.changed = True
+        node.body = new_body
+        return node
+
+    def _rewrite_outer_loop(self, outer: ast.For) -> tuple[list[ast.stmt], ast.For] | None:
+        if not isinstance(outer.target, ast.Name) or len(outer.body) != 1:
+            return None
+        inner = outer.body[0]
+        if not isinstance(inner, ast.For) or not isinstance(inner.target, ast.Name):
+            return None
+        if not isinstance(inner.iter, ast.Name) or inner.orelse or len(inner.body) != 1:
+            return None
+        condition = inner.body[0]
+        if not isinstance(condition, ast.If) or condition.orelse or len(condition.body) != 2:
+            return None
+        append_statement, break_statement = condition.body
+        if not isinstance(append_statement, ast.Expr) or not isinstance(break_statement, ast.Break):
+            return None
+        append_call = append_statement.value
+        if (
+            not isinstance(append_call, ast.Call)
+            or not isinstance(append_call.func, ast.Attribute)
+            or append_call.func.attr != "append"
+            or not isinstance(append_call.func.value, ast.Name)
+            or len(append_call.args) != 1
+            or not isinstance(append_call.args[0], ast.Name)
+            or append_call.args[0].id != inner.target.id
+        ):
+            return None
+        keys = _lookup_keys(condition.test, inner.target.id, outer.target.id)
+        if keys is None or _name_is_mutated(outer, inner.iter.id):
+            return None
+        record_key, query_key = keys
+        index_name = f"_perf_lookup_{self.index}"
+        self.index += 1
+        setup = _first_match_index(index_name, inner.target.id, inner.iter.id, record_key)
+        lookup_name = f"_perf_match_{self.index}"
+        lookup = ast.Assign(
+            targets=[ast.Name(id=lookup_name, ctx=ast.Store())],
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id=index_name, ctx=ast.Load()),
+                    attr="get",
+                    ctx=ast.Load(),
+                ),
+                args=[_key_subscript(outer.target.id, query_key)],
+                keywords=[],
+            ),
+        )
+        append = ast.If(
+            test=ast.Compare(
+                left=ast.Name(id=lookup_name, ctx=ast.Load()),
+                ops=[ast.IsNot()],
+                comparators=[ast.Constant(value=None)],
+            ),
+            body=[
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id=append_call.func.value.id, ctx=ast.Load()),
+                            attr="append",
+                            ctx=ast.Load(),
+                        ),
+                        args=[ast.Name(id=lookup_name, ctx=ast.Load())],
+                        keywords=[],
+                    )
+                )
+            ],
+            orelse=[],
+        )
+        rewritten = ast.For(
+            target=outer.target,
+            iter=outer.iter,
+            body=[lookup, append],
+            orelse=outer.orelse,
+            type_comment=outer.type_comment,
+        )
+        return setup, ast.copy_location(rewritten, outer)
+
+
+def _lookup_keys(test: ast.expr, record: str, query: str) -> tuple[str, str] | None:
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
+        return None
+    pairs = (
+        (_subscript_key(test.left, record), _subscript_key(test.comparators[0], query)),
+        (_subscript_key(test.comparators[0], record), _subscript_key(test.left, query)),
+    )
+    return next(((record_key, query_key) for record_key, query_key in pairs if record_key and query_key), None)
+
+
+def _subscript_key(expression: ast.expr, variable: str) -> str | None:
+    if (
+        isinstance(expression, ast.Subscript)
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == variable
+        and isinstance(expression.slice, ast.Constant)
+        and isinstance(expression.slice.value, str)
+    ):
+        return expression.slice.value
+    return None
+
+
+def _key_subscript(variable: str, key: str) -> ast.Subscript:
+    return ast.Subscript(
+        value=ast.Name(id=variable, ctx=ast.Load()),
+        slice=ast.Constant(value=key),
+        ctx=ast.Load(),
+    )
+
+
+def _first_match_index(
+    index_name: str, record_name: str, records_name: str, record_key: str
+) -> list[ast.stmt]:
+    initialize = ast.Assign(
+        targets=[ast.Name(id=index_name, ctx=ast.Store())],
+        value=ast.Dict(keys=[], values=[]),
+    )
+    populate = ast.For(
+        target=ast.Name(id=record_name, ctx=ast.Store()),
+        iter=ast.Name(id=records_name, ctx=ast.Load()),
+        body=[
+            ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id=index_name, ctx=ast.Load()),
+                        attr="setdefault",
+                        ctx=ast.Load(),
+                    ),
+                    args=[
+                        _key_subscript(record_name, record_key),
+                        ast.Name(id=record_name, ctx=ast.Load()),
+                    ],
+                    keywords=[],
+                )
+            )
+        ],
+        orelse=[],
+    )
+    return [initialize, populate]
