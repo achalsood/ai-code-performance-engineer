@@ -259,27 +259,27 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if optimization.winner_id else 2
 
         if args.action == "arena":
-            provider: CandidateProvider
+            arena_provider_instance: CandidateProvider
             if args.provider_command:
-                provider = CommandProvider(args.provider_command)
+                arena_provider_instance = CommandProvider(args.provider_command)
                 provider_label = args.provider_label or "command-provider"
             elif not args.model:
                 raise ValueError("--model is required with a built-in provider")
             elif args.provider == "openai":
-                provider = OpenAICompatibleProvider(
+                arena_provider_instance = OpenAICompatibleProvider(
                     model=args.model,
                     base_url=args.provider_base_url or "https://api.openai.com/v1",
                 )
                 provider_label = args.provider_label or f"openai:{args.model}"
             else:
-                provider = OllamaProvider(
+                arena_provider_instance = OllamaProvider(
                     model=args.model,
                     base_url=args.provider_base_url or "http://127.0.0.1:11434",
                 )
                 provider_label = args.provider_label or f"ollama:{args.model}"
             arena_run = run_agent_arena(
                 args.corpus,
-                provider=provider,
+                provider=arena_provider_instance,
                 provider_label=provider_label,
                 rounds=args.rounds,
                 maximum_rounds=args.maximum_rounds,
