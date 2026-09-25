@@ -34,11 +34,11 @@ def markdown_report(run: EvaluationRun, regressions: list[Regression]) -> str:
         )
     lines.extend(
         [
-        "",
-        "## Cases",
-        "",
-        "| Case | Decision | Speedup | 95% CI | Correct |",
-        "|---|---|---:|---:|---:|",
+            "",
+            "## Cases",
+            "",
+            "| Case | Decision | Speedup | 95% CI | Correct |",
+            "|---|---|---:|---:|---:|",
         ]
     )
     for result in run.results:
