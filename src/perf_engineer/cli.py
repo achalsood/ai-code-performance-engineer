@@ -214,286 +214,290 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.action == "analyze":
+        findings = analyze_path(args.path)
+        output_format = "json" if args.json else args.format
+        if output_format == "sarif":
+            rendered = json.dumps(findings_to_sarif(findings), indent=2)
+        elif output_format == "json":
+            rendered = json.dumps([asdict(item) for item in findings], indent=2)
+        else:
+            rendered = "\n".join(
+                f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}"
+                for item in findings
+            )
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + ("\n" if rendered else ""), encoding="utf-8")
+        elif rendered:
+            print(rendered)
+        threshold = {"none": 99, "medium": 1, "high": 2}[args.fail_on]
+        severity = {"low": 0, "medium": 1, "high": 2}
+        return 4 if any(severity.get(item.severity, 1) >= threshold for item in findings) else 0
+    if args.action == "benchmark":
+        benchmark_result = run_benchmark(
+            args.command,
+            cwd=args.cwd,
+                rounds=args.rounds,
+            warmups=args.warmups,
+            timeout=args.timeout,
+        )
+        print(json.dumps(asdict(benchmark_result), indent=2))
+        return 0
+
+    if args.action == "calibrate":
+        baseline, candidate = run_adaptive_paired_benchmarks(
+            args.benchmark,
+            baseline_cwd=args.baseline,
+            candidate_cwd=args.candidate,
+            minimum_rounds=args.rounds,
+                maximum_rounds=max(args.rounds, args.maximum_rounds),
+            warmups=args.warmups,
+        )
+        calibration_payload: dict[str, Any] = {
+            "calibration": {
+                "probe_seconds": baseline.calibration_probe_seconds,
+                "repetitions_per_sample": baseline.repetitions_per_sample,
+                "measurement_rounds": baseline.measurement_rounds,
+                "total_measurement_seconds": baseline.total_measurement_seconds,
+            },
+            "baseline": asdict(baseline),
+            "candidate": asdict(candidate),
+        }
+        print(json.dumps(calibration_payload, indent=2))
+        return 0
+
+    if args.action == "profile":
+        profiler = CProfileAdapter() if args.adapter == "cprofile" else ResourceProfiler()
+        profile_result = profiler.profile(
+            args.command,
+            cwd=args.cwd,
+                policy=ExecutionPolicy(
+                timeout_seconds=args.timeout,
+                memory_bytes=args.memory_mb * 1024 * 1024,
+            ),
+        )
+        serialized = json.dumps(profile_result.to_dict(), indent=2)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(serialized + "\n", encoding="utf-8")
+        print(serialized)
+        return 0
+
+    if args.action == "experiment":
+        record = run_experiment(
+            repository=args.repository,
+            baseline_ref=args.baseline_ref,
+            candidate_ref=args.candidate_ref,
+                benchmark_command=args.benchmark,
+                test_command=args.test,
+            rounds=args.rounds,
+                minimum_improvement_percent=args.minimum_improvement,
+        )
+        destination = save_record(record, args.output)
+        experiment_payload: dict[str, Any] = {
+            **record.to_dict(),
+            "record_path": str(destination),
+        }
+        print(json.dumps(experiment_payload, indent=2))
+        return 0 if record.result.decision == "accept" else 2
+
+    if args.action == "optimize":
+        runner = (
+            DockerRunner(args.docker_image)
+            if args.sandbox == "docker"
+            else LocalProcessRunner()
+        )
+        policy = ExecutionPolicy(
+            timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+        )
+        provider: CandidateProvider
+        if args.provider_command:
+            provider = CommandProvider(args.provider_command)
+        elif not args.model:
+            raise ValueError("--model is required with a built-in provider")
+        elif args.provider == "openai":
+            provider = OpenAICompatibleProvider(
+                model=args.model,
+                base_url=args.provider_base_url or "https://api.openai.com/v1",
+            )
+        else:
+            provider = OllamaProvider(
+                model=args.model,
+                base_url=args.provider_base_url or "http://127.0.0.1:11434",
+            )
+        optimization = optimize(
+            repository=args.repository,
+            baseline_ref=args.baseline_ref,
+            provider=provider,
+            benchmark_command=args.benchmark,
+            test_command=args.test,
+            rounds=args.rounds,
+                maximum_candidates=args.maximum_candidates,
+            minimum_improvement_percent=args.minimum_improvement,
+            maximum_rounds=args.maximum_rounds,
+                maximum_memory_regression_percent=args.maximum_memory_regression,
+                maximum_cpu_regression_percent=args.maximum_cpu_regression,
+                profile_guidance=args.profile_guidance == "auto",
+                maximum_provider_attempts=args.maximum_provider_attempts,
+                runner=runner,
+            policy=policy,
+            audit_logger=AuditLogger(args.audit_log),
+        )
+        record_path = save_optimization(optimization, args.output)
+        patch_path = export_winning_patch(optimization, args.output_patch)
+        optimization_payload: dict[str, Any] = {
+            **optimization.to_dict(),
+            "record_path": str(record_path),
+            "winner_patch_path": str(patch_path) if patch_path else None,
+        }
+        print(json.dumps(optimization_payload, indent=2))
+        return 0 if optimization.winner_id else 2
+
+    if args.action == "fix":
+        policy = ExecutionPolicy(
+            timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+        )
+        fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
+        try:
+            optimization = optimize(
+                repository=(
+                    Path(fixture_repository.name)
+                    if fixture_repository is not None
+                    else args.repository
+                ),
+                baseline_ref=args.baseline_ref,
+                provider=DeterministicFixProvider(),
+            benchmark_command=args.benchmark,
+            test_command=args.test,
+            rounds=args.rounds,
+            maximum_candidates=args.maximum_candidates,
+            minimum_improvement_percent=args.minimum_improvement,
+            maximum_rounds=args.maximum_rounds,
+            maximum_memory_regression_percent=args.maximum_memory_regression,
+            maximum_cpu_regression_percent=args.maximum_cpu_regression,
+            profile_guidance=True,
+            maximum_provider_attempts=1,
+            runner=LocalProcessRunner(),
+            policy=policy,
+            )
+        finally:
+            if fixture_repository is not None:
+                fixture_repository.cleanup()
+        record_path = save_optimization(optimization, args.output)
+        patch_path = export_winning_patch(optimization, args.output_patch)
+        fix_payload: dict[str, Any] = {
+            **optimization.to_dict(),
+            "record_path": str(record_path),
+            "winner_patch_path": str(patch_path) if patch_path else None,
+        }
+        print(json.dumps(fix_payload, indent=2))
+        if args.calibration_summary:
+            measured = next(
+                (
+                    item.result
+                    for item in optimization.evaluations
+                    if item.result is not None
+                ),
+                None,
+            )
+            if measured is not None:
+                baseline = measured.baseline
+                print("\nAdaptive benchmark calibration")
+                print(
+                    f"Probe duration:          "
+                    f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
+                )
+                print(
+                    f"Repetitions per sample:  {baseline.repetitions_per_sample}"
+                )
+                print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
+                print(
+                    f"Total measured duration: "
+                    f"{baseline.total_measurement_seconds or 0.0:.6f} s"
+                )
+                print("\nVerification")
+                print(f"Median speedup:          {measured.speedup_percent:.2f}%")
+                print(
+                    f"95% CI:                  "
+                    f"[{measured.speedup_ci95_low:.2f}%, "
+                    f"{measured.speedup_ci95_high:.2f}%]"
+                )
+                print(f"Decision:                {measured.decision.value.upper()}")
+        return 0 if optimization.winner_id else 2
+
+    if args.action == "arena":
+        arena_provider_instance: CandidateProvider
+        if args.provider_command:
+            arena_provider_instance = CommandProvider(args.provider_command)
+            provider_label = args.provider_label or "command-provider"
+        elif not args.model:
+            raise ValueError("--model is required with a built-in provider")
+        elif args.provider == "openai":
+            arena_provider_instance = OpenAICompatibleProvider(
+                model=args.model,
+                base_url=args.provider_base_url or "https://api.openai.com/v1",
+            )
+            provider_label = args.provider_label or f"openai:{args.model}"
+        else:
+            arena_provider_instance = OllamaProvider(
+                model=args.model,
+                base_url=args.provider_base_url or "http://127.0.0.1:11434",
+            )
+            provider_label = args.provider_label or f"ollama:{args.model}"
+        arena_run = run_agent_arena(
+            args.corpus,
+            provider=arena_provider_instance,
+            provider_label=provider_label,
+            rounds=args.rounds,
+            maximum_rounds=args.maximum_rounds,
+            maximum_candidates=args.maximum_candidates,
+        )
+        destination = save_agent_arena(arena_run, args.output)
+        print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
+        return 0
+
+    if args.action == "evaluate":
+        previous_runs = read_runs(args.history)
+        evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
+        regressions = (
+            detect_regressions(
+                previous_runs[-1],
+                evaluation,
+                tolerance_percent=args.regression_tolerance,
+            )
+            if previous_runs
+            else []
+        )
+        append_run(args.history, evaluation)
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
+        evaluation_payload: dict[str, Any] = {
+            **evaluation.to_dict(),
+            "regressions": [asdict(item) for item in regressions],
+            "report_path": str(args.report),
+        }
+        print(json.dumps(evaluation_payload, indent=2))
+        return 3 if regressions else 0
+
+    correctness = run_correctness(args.test, cwd=args.candidate)
+    baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
+    candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
+    verification_result = compare(
+        baseline,
+        candidate,
+        correctness_passed=correctness,
+        minimum_improvement_percent=args.minimum_improvement,
+    )
+    print(json.dumps(verification_result.to_dict(), indent=2))
+    return 0 if verification_result.decision == "accept" else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.action == "analyze":
-            findings = analyze_path(args.path)
-            output_format = "json" if args.json else args.format
-            if output_format == "sarif":
-                rendered = json.dumps(findings_to_sarif(findings), indent=2)
-            elif output_format == "json":
-                rendered = json.dumps([asdict(item) for item in findings], indent=2)
-            else:
-                rendered = "\n".join(
-                    f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}"
-                    for item in findings
-                )
-            if args.output:
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(rendered + ("\n" if rendered else ""), encoding="utf-8")
-            elif rendered:
-                print(rendered)
-            threshold = {"none": 99, "medium": 1, "high": 2}[args.fail_on]
-            severity = {"low": 0, "medium": 1, "high": 2}
-            return 4 if any(severity.get(item.severity, 1) >= threshold for item in findings) else 0
-        if args.action == "benchmark":
-            benchmark_result = run_benchmark(
-                args.command,
-                cwd=args.cwd,
-                    rounds=args.rounds,
-                warmups=args.warmups,
-                timeout=args.timeout,
-            )
-            print(json.dumps(asdict(benchmark_result), indent=2))
-            return 0
-
-        if args.action == "calibrate":
-            baseline, candidate = run_adaptive_paired_benchmarks(
-                args.benchmark,
-                baseline_cwd=args.baseline,
-                candidate_cwd=args.candidate,
-                minimum_rounds=args.rounds,
-                    maximum_rounds=max(args.rounds, args.maximum_rounds),
-                warmups=args.warmups,
-            )
-            calibration_payload: dict[str, Any] = {
-                "calibration": {
-                    "probe_seconds": baseline.calibration_probe_seconds,
-                    "repetitions_per_sample": baseline.repetitions_per_sample,
-                    "measurement_rounds": baseline.measurement_rounds,
-                    "total_measurement_seconds": baseline.total_measurement_seconds,
-                },
-                "baseline": asdict(baseline),
-                "candidate": asdict(candidate),
-            }
-            print(json.dumps(calibration_payload, indent=2))
-            return 0
-
-        if args.action == "profile":
-            profiler = CProfileAdapter() if args.adapter == "cprofile" else ResourceProfiler()
-            profile_result = profiler.profile(
-                args.command,
-                cwd=args.cwd,
-                    policy=ExecutionPolicy(
-                    timeout_seconds=args.timeout,
-                    memory_bytes=args.memory_mb * 1024 * 1024,
-                ),
-            )
-            serialized = json.dumps(profile_result.to_dict(), indent=2)
-            if args.output:
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(serialized + "\n", encoding="utf-8")
-            print(serialized)
-            return 0
-
-        if args.action == "experiment":
-            record = run_experiment(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                candidate_ref=args.candidate_ref,
-                    benchmark_command=args.benchmark,
-                    test_command=args.test,
-                rounds=args.rounds,
-                    minimum_improvement_percent=args.minimum_improvement,
-            )
-            destination = save_record(record, args.output)
-            experiment_payload: dict[str, Any] = {
-                **record.to_dict(),
-                "record_path": str(destination),
-            }
-            print(json.dumps(experiment_payload, indent=2))
-            return 0 if record.result.decision == "accept" else 2
-
-        if args.action == "optimize":
-            runner = (
-                DockerRunner(args.docker_image)
-                if args.sandbox == "docker"
-                else LocalProcessRunner()
-            )
-            policy = ExecutionPolicy(
-                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
-            )
-            provider: CandidateProvider
-            if args.provider_command:
-                provider = CommandProvider(args.provider_command)
-            elif not args.model:
-                raise ValueError("--model is required with a built-in provider")
-            elif args.provider == "openai":
-                provider = OpenAICompatibleProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "https://api.openai.com/v1",
-                )
-            else:
-                provider = OllamaProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
-                )
-            optimization = optimize(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                provider=provider,
-                benchmark_command=args.benchmark,
-                test_command=args.test,
-                rounds=args.rounds,
-                    maximum_candidates=args.maximum_candidates,
-                minimum_improvement_percent=args.minimum_improvement,
-                maximum_rounds=args.maximum_rounds,
-                    maximum_memory_regression_percent=args.maximum_memory_regression,
-                    maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                    profile_guidance=args.profile_guidance == "auto",
-                    maximum_provider_attempts=args.maximum_provider_attempts,
-                    runner=runner,
-                policy=policy,
-                audit_logger=AuditLogger(args.audit_log),
-            )
-            record_path = save_optimization(optimization, args.output)
-            patch_path = export_winning_patch(optimization, args.output_patch)
-            optimization_payload: dict[str, Any] = {
-                **optimization.to_dict(),
-                "record_path": str(record_path),
-                "winner_patch_path": str(patch_path) if patch_path else None,
-            }
-            print(json.dumps(optimization_payload, indent=2))
-            return 0 if optimization.winner_id else 2
-
-        if args.action == "fix":
-            policy = ExecutionPolicy(
-                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
-            )
-            fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
-            try:
-                optimization = optimize(
-                    repository=(
-                        Path(fixture_repository.name)
-                        if fixture_repository is not None
-                        else args.repository
-                    ),
-                    baseline_ref=args.baseline_ref,
-                    provider=DeterministicFixProvider(),
-                benchmark_command=args.benchmark,
-                test_command=args.test,
-                rounds=args.rounds,
-                maximum_candidates=args.maximum_candidates,
-                minimum_improvement_percent=args.minimum_improvement,
-                maximum_rounds=args.maximum_rounds,
-                maximum_memory_regression_percent=args.maximum_memory_regression,
-                maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                profile_guidance=True,
-                maximum_provider_attempts=1,
-                runner=LocalProcessRunner(),
-                policy=policy,
-                )
-            finally:
-                if fixture_repository is not None:
-                    fixture_repository.cleanup()
-            record_path = save_optimization(optimization, args.output)
-            patch_path = export_winning_patch(optimization, args.output_patch)
-            fix_payload: dict[str, Any] = {
-                **optimization.to_dict(),
-                "record_path": str(record_path),
-                "winner_patch_path": str(patch_path) if patch_path else None,
-            }
-            print(json.dumps(fix_payload, indent=2))
-            if args.calibration_summary:
-                measured = next(
-                    (
-                        item.result
-                        for item in optimization.evaluations
-                        if item.result is not None
-                    ),
-                    None,
-                )
-                if measured is not None:
-                    baseline = measured.baseline
-                    print("\nAdaptive benchmark calibration")
-                    print(
-                        f"Probe duration:          "
-                        f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
-                    )
-                    print(
-                        f"Repetitions per sample:  {baseline.repetitions_per_sample}"
-                    )
-                    print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
-                    print(
-                        f"Total measured duration: "
-                        f"{baseline.total_measurement_seconds or 0.0:.6f} s"
-                    )
-                    print("\nVerification")
-                    print(f"Median speedup:          {measured.speedup_percent:.2f}%")
-                    print(
-                        f"95% CI:                  "
-                        f"[{measured.speedup_ci95_low:.2f}%, "
-                        f"{measured.speedup_ci95_high:.2f}%]"
-                    )
-                    print(f"Decision:                {measured.decision.value.upper()}")
-            return 0 if optimization.winner_id else 2
-
-        if args.action == "arena":
-            arena_provider_instance: CandidateProvider
-            if args.provider_command:
-                arena_provider_instance = CommandProvider(args.provider_command)
-                provider_label = args.provider_label or "command-provider"
-            elif not args.model:
-                raise ValueError("--model is required with a built-in provider")
-            elif args.provider == "openai":
-                arena_provider_instance = OpenAICompatibleProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "https://api.openai.com/v1",
-                )
-                provider_label = args.provider_label or f"openai:{args.model}"
-            else:
-                arena_provider_instance = OllamaProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
-                )
-                provider_label = args.provider_label or f"ollama:{args.model}"
-            arena_run = run_agent_arena(
-                args.corpus,
-                provider=arena_provider_instance,
-                provider_label=provider_label,
-                rounds=args.rounds,
-                maximum_rounds=args.maximum_rounds,
-                maximum_candidates=args.maximum_candidates,
-            )
-            destination = save_agent_arena(arena_run, args.output)
-            print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
-            return 0
-
-        if args.action == "evaluate":
-            previous_runs = read_runs(args.history)
-            evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
-            regressions = (
-                detect_regressions(
-                    previous_runs[-1],
-                    evaluation,
-                    tolerance_percent=args.regression_tolerance,
-                )
-                if previous_runs
-                else []
-            )
-            append_run(args.history, evaluation)
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
-            evaluation_payload: dict[str, Any] = {
-                **evaluation.to_dict(),
-                "regressions": [asdict(item) for item in regressions],
-                "report_path": str(args.report),
-            }
-            print(json.dumps(evaluation_payload, indent=2))
-            return 3 if regressions else 0
-
-        correctness = run_correctness(args.test, cwd=args.candidate)
-        baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
-        candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
-        verification_result = compare(
-            baseline,
-            candidate,
-            correctness_passed=correctness,
-            minimum_improvement_percent=args.minimum_improvement,
-        )
-        print(json.dumps(verification_result.to_dict(), indent=2))
-        return 0 if verification_result.decision == "accept" else 2
+        return _dispatch(args)
     except (
         BenchmarkError,
         ProfilingError,
