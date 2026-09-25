@@ -579,3 +579,36 @@ def test_deterministic_provider_indexes_known_hash_safe_range() -> None:
     )
     patch = DeterministicFixProvider().generate(request)[0].patch
     assert "_perf_membership_0 = set(values)" in patch
+
+
+def test_deterministic_provider_avoids_membership_index_name_collision() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    _perf_membership_0 = "preserve-me"
+    result = []
+    for query in queries:
+        result.append((query in values, _perf_membership_0))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_membership_1 = set(values)" in patch
+    assert "query in _perf_membership_1" in patch
+    assert "_perf_membership_0 = 'preserve-me'" in patch
