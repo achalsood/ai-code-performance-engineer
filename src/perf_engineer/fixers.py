@@ -60,49 +60,58 @@ def _rewrite_python(source: str) -> _Rewrite | None:
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    membership_transformer = _MembershipIndexTransformer()
-    rewritten = membership_transformer.visit(tree)
-    if membership_transformer.changed:
-        ast.fix_missing_locations(rewritten)
-        return _Rewrite(
+
+    applied: list[_Rewrite] = []
+    transformers: tuple[tuple[ast.NodeTransformer, str, str, str], ...] = (
+        (
+            _MembershipIndexTransformer(),
             "Index repeated membership lookups",
             "Builds a set once and reuses it for repeated membership tests inside a loop.",
             "membership-index",
-            ast.unparse(rewritten) + "\n",
-        )
-
-    count_transformer = _LinearCountTransformer()
-    rewritten = count_transformer.visit(tree)
-    if count_transformer.changed:
-        _ensure_counter_import(rewritten)
-        ast.fix_missing_locations(rewritten)
-        return _Rewrite(
+        ),
+        (
+            _LinearCountTransformer(),
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
-            ast.unparse(rewritten) + "\n",
-        )
-
-    hoist_transformer = _InvariantAllocationTransformer()
-    rewritten = hoist_transformer.visit(tree)
-    if hoist_transformer.changed:
-        ast.fix_missing_locations(rewritten)
-        return _Rewrite(
+        ),
+        (
+            _InvariantAllocationTransformer(),
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
+        ),
+        (
+            _BatchedNestedLookupTransformer(),
+            "Index repeated nested lookup",
+            "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
+            "nested-loop-index",
+        ),
+    )
+    rewritten: ast.AST = tree
+    for transformer, title, rationale, strategy in transformers:
+        rewritten = transformer.visit(rewritten)
+        if not getattr(transformer, "changed", False):
+            continue
+        if isinstance(transformer, _LinearCountTransformer):
+            _ensure_counter_import(rewritten)
+        ast.fix_missing_locations(rewritten)
+        applied.append(_Rewrite(title, rationale, strategy, ""))
+
+    if not applied:
+        return None
+    if len(applied) == 1:
+        selected = applied[0]
+        return _Rewrite(
+            selected.title,
+            selected.rationale,
+            selected.strategy,
             ast.unparse(rewritten) + "\n",
         )
-
-    lookup_transformer = _BatchedNestedLookupTransformer()
-    rewritten = lookup_transformer.visit(tree)
-    if not lookup_transformer.changed:
-        return None
-    ast.fix_missing_locations(rewritten)
     return _Rewrite(
-        "Index repeated nested lookup",
-        "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
-        "nested-loop-index",
+        "Apply compatible performance fixes",
+        "Combines conservative optimizations that target independent repeated work.",
+        "combined:" + "+".join(item.strategy for item in applied),
         ast.unparse(rewritten) + "\n",
     )
 
