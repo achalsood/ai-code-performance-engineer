@@ -55,16 +55,6 @@ class DeterministicFixProvider:
         return candidates
 
 
-_TRANSFORMER_SPECS = (
-    (
-        _MembershipIndexTransformer if "_MembershipIndexTransformer" in globals() else None,
-        "Index repeated membership lookups",
-        "Builds a set once and reuses it for repeated membership tests inside a loop.",
-        "membership-index",
-    ),
-)
-
-
 def _rewrite_python_plans(source: str) -> list[_Rewrite]:
     specs = (
         (
