@@ -212,3 +212,60 @@ assert rank_queries([5], [1]) == [(1, 5, 5)]
     assert evaluation.result.speedup_percent >= 5.0
     assert evaluation.result.speedup_ci95_low >= 5.0
     assert evaluation.changed_paths == ("workload.py",)
+
+
+def test_nested_lookup_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+    from perf_engineer.fixers import DeterministicFixProvider
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def find_record(records, queries):
+    for query in queries:
+        for record in records:
+            if record["id"] == query["id"]:
+                return record
+    return None
+
+records = [{"id": value, "payload": value * 2} for value in range(12000)]
+queries = [{"id": 11999}]
+for _ in range(120):
+    find_record(records, queries)
+"""
+    )
+    (repository / "test_correctness.py").write_text(
+        """from workload import find_record
+
+records = [{"id": 1, "name": "one"}, {"id": 2, "name": "two"}]
+assert find_record(records, [{"id": 2}]) == {"id": 2, "name": "two"}
+assert find_record(records, [{"id": 99}]) is None
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "test_correctness.py"],
+        rounds=5,
+        maximum_rounds=9,
+        minimum_improvement_percent=5.0,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert result.winner_id == "deterministic-1"
+    evaluation = result.evaluations[0]
+    assert evaluation.status == "accept"
+    assert evaluation.result is not None
+    assert evaluation.result.correctness_passed
+    assert evaluation.result.speedup_percent >= 5.0
+    assert evaluation.result.speedup_ci95_low >= 5.0
+    assert evaluation.changed_paths == ("workload.py",)
