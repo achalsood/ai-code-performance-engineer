@@ -58,6 +58,17 @@ def _rewrite_python(source: str) -> _Rewrite | None:
         tree = ast.parse(source)
     except SyntaxError:
         return None
+    membership_transformer = _MembershipIndexTransformer()
+    rewritten = membership_transformer.visit(tree)
+    if membership_transformer.changed:
+        ast.fix_missing_locations(rewritten)
+        return _Rewrite(
+            "Index repeated membership lookups",
+            "Builds a set once and reuses it for repeated membership tests inside a loop.",
+            "membership-index",
+            ast.unparse(rewritten) + "\n",
+        )
+
     count_transformer = _LinearCountTransformer()
     rewritten = count_transformer.visit(tree)
     if count_transformer.changed:
@@ -121,6 +132,96 @@ def _ensure_counter_import(tree: ast.AST) -> None:
         insert_at,
         ast.ImportFrom(module="collections", names=[ast.alias(name="Counter")], level=0),
     )
+
+
+class _MembershipIndexTransformer(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self.changed = False
+        self.index = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        new_body: list[ast.stmt] = []
+        for statement in node.body:
+            if isinstance(statement, ast.For):
+                replacement = self._rewrite_loop(statement)
+                if replacement is not None:
+                    setup, loop = replacement
+                    new_body.extend((setup, loop))
+                    self.changed = True
+                    continue
+            new_body.append(statement)
+        node.body = new_body
+        return node
+
+    def _rewrite_loop(self, loop: ast.For) -> tuple[ast.Assign, ast.For] | None:
+        matches = [
+            compare
+            for compare in ast.walk(loop)
+            if isinstance(compare, ast.Compare)
+            and len(compare.ops) == 1
+            and isinstance(compare.ops[0], (ast.In, ast.NotIn))
+            and len(compare.comparators) == 1
+            and isinstance(compare.comparators[0], ast.Name)
+        ]
+        if not matches:
+            return None
+        collections = {
+            compare.comparators[0].id
+            for compare in matches
+            if isinstance(compare.comparators[0], ast.Name)
+        }
+        if len(collections) != 1:
+            return None
+        collection = next(iter(collections))
+        loop_names = {
+            child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
+        }
+        if collection in loop_names or _name_is_mutated(loop, collection):
+            return None
+        if _name_is_passed_to_unknown_call(loop, collection):
+            return None
+        if not all(_membership_probe_is_hash_safe(compare.left) for compare in matches):
+            return None
+
+        index_name = f"_perf_membership_{self.index}"
+        self.index += 1
+        setup = ast.Assign(
+            targets=[ast.Name(id=index_name, ctx=ast.Store())],
+            value=ast.Call(
+                func=ast.Name(id="set", ctx=ast.Load()),
+                args=[ast.Name(id=collection, ctx=ast.Load())],
+                keywords=[],
+            ),
+        )
+        rewritten_loop = _MembershipCollectionReplacer(collection, index_name).visit(loop)
+        assert isinstance(rewritten_loop, ast.For)
+        return setup, rewritten_loop
+
+
+def _membership_probe_is_hash_safe(expression: ast.expr) -> bool:
+    return isinstance(expression, (ast.Name, ast.Constant))
+
+
+class _MembershipCollectionReplacer(ast.NodeTransformer):
+    def __init__(self, collection: str, index_name: str) -> None:
+        self.collection = collection
+        self.index_name = index_name
+
+    def visit_Compare(self, node: ast.Compare) -> ast.AST:
+        self.generic_visit(node)
+        if (
+            len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.In, ast.NotIn))
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Name)
+            and node.comparators[0].id == self.collection
+        ):
+            node.comparators[0] = ast.copy_location(
+                ast.Name(id=self.index_name, ctx=ast.Load()),
+                node.comparators[0],
+            )
+        return node
 
 
 class _LinearCountTransformer(ast.NodeTransformer):
