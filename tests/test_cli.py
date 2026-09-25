@@ -149,3 +149,25 @@ def test_analyze_sarif_prints_serialized_report(tmp_path, monkeypatch, capsys) -
 
     assert main(["analyze", str(tmp_path), "--format", "sarif"]) == 0
     assert '"version": "2.1.0"' in capsys.readouterr().out
+
+
+def test_benchmark_command_serializes_result(tmp_path, monkeypatch, capsys) -> None:
+    from perf_engineer.models import BenchmarkResult
+
+    measured = BenchmarkResult(("python",), (1.0,) * 3, 1.0, 1.0, 0.0, 1.0, 1.0)
+    monkeypatch.setattr("perf_engineer.cli.run_benchmark", lambda *args, **kwargs: measured)
+
+    assert main(["benchmark", "python bench.py", "--cwd", str(tmp_path)]) == 0
+    assert '"median_seconds": 1.0' in capsys.readouterr().out
+
+
+def test_cli_reports_benchmark_error(tmp_path, monkeypatch, capsys) -> None:
+    from perf_engineer.benchmark import BenchmarkError
+
+    def fail(*args, **kwargs):
+        raise BenchmarkError("measurement failed")
+
+    monkeypatch.setattr("perf_engineer.cli.run_benchmark", fail)
+
+    assert main(["benchmark", "python bench.py", "--cwd", str(tmp_path)]) == 1
+    assert "error: measurement failed" in capsys.readouterr().err
