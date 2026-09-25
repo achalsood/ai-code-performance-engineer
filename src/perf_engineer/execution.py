@@ -157,6 +157,52 @@ def _resident_memory_bytes(process_id: int) -> int:
     return 0
 
 
+def _resident_working_set_bytes(process_id: int) -> int:
+    """Return current resident memory for a Windows process."""
+    if os.name != "nt":
+        return _resident_memory_bytes(process_id)
+
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_ulonglong),
+            ("WorkingSetSize", ctypes.c_ulonglong),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
+            ("PagefileUsage", ctypes.c_ulonglong),
+            ("PeakPagefileUsage", ctypes.c_ulonglong),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessMemoryCounters),
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x0400, False, process_id)
+    if not handle:
+        return 0
+    try:
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return 0
+        return int(counters.WorkingSetSize)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
     """Return the live Windows process tree rooted at *root_process_id*."""
     import ctypes
@@ -222,8 +268,11 @@ def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
 
 def _process_group_memory_bytes(process_group_id: int) -> int:
     if os.name == "nt":
+        # Do not sum each process' historical peak: those peaks may have
+        # occurred at different times and can massively overstate concurrent
+        # tree memory. Sample the live working set for the whole tree instead.
         return sum(
-            _resident_memory_bytes(process_id)
+            _resident_working_set_bytes(process_id)
             for process_id in _windows_descendant_process_ids(process_group_id)
         )
     total = 0
