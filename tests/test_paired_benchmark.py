@@ -16,7 +16,9 @@ def test_paired_benchmark_collects_equal_samples(tmp_path: Path) -> None:
     assert len(before.samples_seconds) == len(after.samples_seconds) == 3
 
 
-def test_adaptive_pairing_stops_after_stable_minimum(tmp_path: Path) -> None:
+def test_adaptive_pairing_preserves_equal_samples_when_evidence_is_ambiguous(
+    tmp_path: Path,
+) -> None:
     baseline = tmp_path / "baseline"
     candidate = tmp_path / "candidate"
     baseline.mkdir()
@@ -30,5 +32,7 @@ def test_adaptive_pairing_stops_after_stable_minimum(tmp_path: Path) -> None:
         maximum_rounds=8,
         warmups=0,
         target_mad_percent=100.0,
+        minimum_measurement_seconds=0.0,
     )
-    assert len(before.samples_seconds) == len(after.samples_seconds) == 3
+    assert len(before.samples_seconds) == len(after.samples_seconds)
+    assert 3 <= len(before.samples_seconds) <= 8

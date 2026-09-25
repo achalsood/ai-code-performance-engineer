@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
+
+
+def _lock_stream(stream: IO[str]) -> None:
+    if os.name == "posix":
+        import fcntl
+
+        fcntl.flock(  # type: ignore[attr-defined]
+            stream, fcntl.LOCK_EX  # type: ignore[attr-defined]
+        )
 
 
 class AuditLogger:
@@ -18,7 +26,7 @@ class AuditLogger:
     def append(self, event: str, data: dict[str, Any]) -> str:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a+", encoding="utf-8") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
+            _lock_stream(stream)
             previous_hash = self._last_hash(stream)
             body = {
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -37,19 +45,14 @@ class AuditLogger:
 
     @staticmethod
     def _last_hash(stream: Any) -> str:
-        stream.seek(0, os.SEEK_END)
-        end = stream.tell()
-        if end == 0:
+        stream.seek(0)
+        last_line = ""
+        for line in stream:
+            if line.strip():
+                last_line = line
+        if not last_line:
             return "0" * 64
-        position = end - 1
-        while position > 0:
-            stream.seek(position)
-            if stream.read(1) == "\n" and position < end - 1:
-                break
-            position -= 1
-        stream.seek(position + 1 if position else 0)
-        line = stream.readline().strip()
-        digest = json.loads(line)["hash"]
+        digest = json.loads(last_line)["hash"]
         if not isinstance(digest, str):
             raise ValueError("invalid audit hash")
         return digest

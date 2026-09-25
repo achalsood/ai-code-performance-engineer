@@ -40,8 +40,11 @@ perf-engineer = "perf_engineer.cli:main"
 packages = ["src/perf_engineer"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -m 'not performance'"
 testpaths = ["tests"]
+markers = [
+  "performance: hardware-sensitive empirical performance verification tests",
+]
 
 [tool.ruff]
 line-length = 100

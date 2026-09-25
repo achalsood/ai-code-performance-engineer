@@ -41,3 +41,20 @@ def test_applies_checked_patch(tmp_path: Path) -> None:
     (tmp_path / "example.py").write_text("value = 1\n")
     assert apply_patch(tmp_path, VALID_PATCH) == ("example.py",)
     assert (tmp_path / "example.py").read_text() == "value = 2\n"
+
+
+def test_applies_lf_patch_without_platform_newline_translation(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "example.py").write_bytes(b"value = 1\n")
+    patch = """diff --git a/example.py b/example.py
+--- a/example.py
++++ b/example.py
+@@ -1 +1,2 @@
+ value = 1
++extra = 2
+"""
+    assert apply_patch(tmp_path, patch) == ("example.py",)
+    assert (tmp_path / "example.py").read_text().splitlines() == [
+        "value = 1",
+        "extra = 2",
+    ]

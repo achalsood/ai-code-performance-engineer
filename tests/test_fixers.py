@@ -414,3 +414,520 @@ def test_deterministic_provider_refuses_count_when_collection_escapes() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_repeated_membership() -> None:
+    source = """def present():
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in range(10):
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+    assert "query in _perf_membership_0" in patch
+
+
+def test_deterministic_provider_refuses_membership_when_collection_mutates() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query in values)
+        values.append(query)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_when_collection_escapes() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        inspect_values(values)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_computed_membership_probe() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query["id"] in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_for_unknown_collection_elements() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_known_hash_safe_range() -> None:
+    source = """def present():
+    values = list(range(1000))
+    result = []
+    for query in range(2000):
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+
+
+def test_deterministic_provider_avoids_membership_index_name_collision() -> None:
+    source = """def present():
+    values = [1, 2, 3, 4, 5]
+    _perf_membership_0 = "preserve-me"
+    result = []
+    for query in range(10):
+        result.append((query in values, _perf_membership_0))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_membership_1 = set(values)" in patch
+    assert "query in _perf_membership_1" in patch
+    assert "_perf_membership_0 = 'preserve-me'" in patch
+
+
+def test_deterministic_provider_refuses_membership_when_alias_mutates() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        alias = values
+        result.append(query in values)
+        alias.append(query)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                6,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_when_alias_escapes() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        alias = values
+        inspect_values(alias)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                7,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_for_unknown_probe_elements() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_membership_for_hash_safe_probe_range() -> None:
+    source = """def present():
+    values = list(range(1000))
+    result = []
+    for query in range(2000):
+        result.append(query not in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+    assert "query not in _perf_membership_0" in patch
+
+
+def test_deterministic_provider_refuses_multiple_membership_collections() -> None:
+    source = """def classify():
+    primary = [1, 2, 3, 4, 5]
+    secondary = [6, 7, 8, 9, 10]
+    result = []
+    for query in range(12):
+        result.append((query in primary, query not in secondary))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                6,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_rewrites_multiple_memberships_same_collection() -> None:
+    source = """def classify():
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in range(10):
+        result.append((query in values, query not in values))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+    assert "query in _perf_membership_0" in patch
+    assert "query not in _perf_membership_0" in patch
+
+
+def test_deterministic_provider_avoids_later_membership_index_name_collision() -> None:
+    source = """def present():
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in range(10):
+        result.append(query in values)
+    _perf_membership_0 = "preserve-me"
+    return result, _perf_membership_0
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "_perf_membership_1 = set(values)" in patch
+    assert "_perf_membership_0 = 'preserve-me'" in patch
+
+
+def test_deterministic_provider_refuses_preloop_alias_mutation() -> None:
+    source = """def present():
+    values = [1, 2, 3, 4, 5]
+    alias = values
+    result = []
+    for query in range(10):
+        alias.append(query)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                7,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_preloop_alias_escape() -> None:
+    source = """def present():
+    values = [1, 2, 3, 4, 5]
+    alias = values
+    result = []
+    for query in range(10):
+        inspect_values(alias)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                7,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_composes_independent_optimizations() -> None:
+    source = """def optimize_both():
+    values = list(range(1000))
+    result = []
+    for query in range(2000):
+        result.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return result, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+            Finding(
+                "PERF002",
+                "example.py",
+                11,
+                "high",
+                "Invariant sorting executes inside a loop.",
+                "Hoist invariant sorting outside the loop.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert len(candidates) == 3
+    assert [candidate.strategy for candidate in candidates] == [
+        "membership-index",
+        "hoist-invariant-work",
+        "combined:membership-index+hoist-invariant-work",
+    ]
+    membership, hoist, combined = candidates
+    assert "_perf_membership_0 = set(values)" in membership.patch
+    assert "_perf_invariant_0" not in membership.patch
+    assert "_perf_invariant_0 = sorted(ordered_source)" in hoist.patch
+    assert "_perf_membership_0" not in hoist.patch
+    assert "_perf_membership_0 = set(values)" in combined.patch
+    assert "query in _perf_membership_0" in combined.patch
+    assert "_perf_invariant_0 = sorted(ordered_source)" in combined.patch

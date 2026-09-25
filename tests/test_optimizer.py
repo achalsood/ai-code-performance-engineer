@@ -2,6 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
@@ -105,6 +107,7 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+@pytest.mark.performance
 def test_deterministic_fixer_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -149,8 +152,16 @@ assert frequencies([]) == []
         maximum_provider_attempts=1,
     )
 
-    assert result.winner_id == "deterministic-1"
     evaluation = result.evaluations[0]
+    assert result.winner_id == "deterministic-1", (
+        f"status={evaluation.status}; "
+        f"reason={evaluation.result.reason if evaluation.result else 'no verification result'}; "
+        f"speedup={evaluation.result.speedup_percent if evaluation.result else 'n/a'}; "
+        f"ci95=[{evaluation.result.speedup_ci95_low if evaluation.result else 'n/a'}, "
+        f"{evaluation.result.speedup_ci95_high if evaluation.result else 'n/a'}]; "
+        f"memory_change={evaluation.result.memory_change_percent if evaluation.result else 'n/a'}; "
+        f"cpu_change={evaluation.result.cpu_change_percent if evaluation.result else 'n/a'}"
+    )
     assert evaluation.status == "accept"
     assert evaluation.result is not None
     assert evaluation.result.correctness_passed
@@ -159,6 +170,7 @@ assert frequencies([]) == []
     assert evaluation.changed_paths == ("workload.py",)
 
 
+@pytest.mark.performance
 def test_invariant_hoist_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -214,6 +226,7 @@ assert rank_queries([5], [1]) == [(1, 5, 5)]
     assert evaluation.changed_paths == ("workload.py",)
 
 
+@pytest.mark.performance
 def test_batched_lookup_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
     from perf_engineer.fixers import DeterministicFixProvider
 
@@ -279,3 +292,143 @@ assert match_records(records, []) == []
     assert evaluation.result.speedup_percent >= 5.0
     assert evaluation.result.speedup_ci95_low >= 5.0
     assert evaluation.changed_paths == ("workload.py",)
+
+
+@pytest.mark.performance
+def test_membership_index_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+    from perf_engineer.fixers import DeterministicFixProvider
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def present():
+    values = list(range(12000))
+    result = []
+    for query in range(6000, 18000):
+        result.append(query in values)
+    return result
+
+for _ in range(3):
+    present()
+"""
+    )
+    (repository / "test_correctness.py").write_text(
+        """from workload import present
+
+result = present()
+assert result[0] is True
+assert result[5999] is True
+assert result[6000] is False
+assert result[-1] is False
+assert len(result) == 12000
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "test_correctness.py"],
+        rounds=5,
+        maximum_rounds=9,
+        minimum_improvement_percent=5.0,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert result.winner_id == "deterministic-1"
+    evaluation = result.evaluations[0]
+    assert evaluation.status == "accept"
+    assert evaluation.result is not None
+    assert evaluation.result.correctness_passed
+    assert evaluation.result.speedup_percent >= 5.0
+    assert evaluation.result.speedup_ci95_low >= 5.0
+    assert evaluation.changed_paths == ("workload.py",)
+
+
+@pytest.mark.performance
+def test_plan_search_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+    from perf_engineer.fixers import DeterministicFixProvider
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def optimize_both():
+    values = list(range(12000))
+    membership = []
+    for query in range(6000, 18000):
+        membership.append(query in values)
+
+    ordered_source = list(range(6000, 0, -1))
+    ranked = []
+    for query in range(250):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0], ordered[-1]))
+    return membership, ranked
+
+for _ in range(2):
+    optimize_both()
+"""
+    )
+    (repository / "test_correctness.py").write_text(
+        """from workload import optimize_both
+
+membership, ranked = optimize_both()
+assert membership[0] is True
+assert membership[5999] is True
+assert membership[6000] is False
+assert membership[-1] is False
+assert len(membership) == 12000
+assert ranked[0] == (0, 1, 6000)
+assert ranked[-1] == (249, 1, 6000)
+assert len(ranked) == 250
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "test_correctness.py"],
+        rounds=5,
+        maximum_rounds=9,
+        minimum_improvement_percent=5.0,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert [evaluation.candidate.strategy for evaluation in result.evaluations] == [
+        "membership-index",
+        "hoist-invariant-work",
+        "combined:membership-index+hoist-invariant-work",
+    ]
+    combined = result.evaluations[2]
+    assert "_perf_membership_0" in combined.candidate.patch
+    assert "_perf_invariant_0" in combined.candidate.patch
+    assert combined.status == "accept"
+    assert combined.result is not None
+    assert combined.result.correctness_passed
+    assert combined.result.speedup_percent >= 5.0
+    assert combined.result.speedup_ci95_low >= 5.0
+    assert combined.changed_paths == ("workload.py",)
+
+    accepted_ids = {
+        evaluation.candidate.candidate_id
+        for evaluation in result.evaluations
+        if evaluation.status == "accept"
+    }
+    assert result.winner_id in accepted_ids

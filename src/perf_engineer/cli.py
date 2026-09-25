@@ -4,14 +4,16 @@ import argparse
 import json
 import shlex
 import sys
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .agent_arena import run_agent_arena, save_agent_arena
 from .analyzer import analyze_path
 from .audit import AuditLogger
-from .benchmark import BenchmarkError, run_benchmark
+from .benchmark import BenchmarkError, run_adaptive_paired_benchmarks, run_benchmark
 from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
@@ -39,6 +41,37 @@ def _command(value: str) -> list[str]:
     return command
 
 
+def _fixture_repository(source: Path) -> tempfile.TemporaryDirectory[str]:
+    if not source.is_dir():
+        raise ValueError(f"fixture directory does not exist: {source}")
+    temporary = tempfile.TemporaryDirectory(prefix="perf-fixture-")
+    destination = Path(temporary.name)
+    try:
+        for item in source.iterdir():
+            if item.is_file():
+                (destination / item.name).write_bytes(item.read_bytes())
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(destination)], check=True)
+        subprocess.run(
+            ["git", "-C", str(destination), "config", "user.email", "fixture@local"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(destination), "config", "user.name", "Perf Fixture"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(destination), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(destination), "commit", "-qm", "fixture baseline"],
+            check=True,
+        )
+    except BaseException:
+        temporary.cleanup()
+        raise
+    return temporary
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="perf-engineer")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -64,6 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--test", type=_command, required=True)
     verify.add_argument("--rounds", type=int, default=7)
     verify.add_argument("--minimum-improvement", type=float, default=5.0)
+
+    calibrate = subparsers.add_parser(
+        "calibrate", help="inspect adaptive benchmark calibration between two worktrees"
+    )
+    calibrate.add_argument("--baseline", type=Path, required=True)
+    calibrate.add_argument("--candidate", type=Path, required=True)
+    calibrate.add_argument("--benchmark", type=_command, required=True)
+    calibrate.add_argument("--rounds", type=int, default=7)
+    calibrate.add_argument("--maximum-rounds", type=int, default=21)
+    calibrate.add_argument("--warmups", type=int, default=2)
 
     experiment = subparsers.add_parser(
         "experiment", help="run a reproducible comparison between two Git revisions"
@@ -115,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
         "fix", help="generate and verify deterministic performance fixes"
     )
     fix.add_argument("--repository", type=Path, default=Path.cwd())
+    fix.add_argument(
+        "--fixture",
+        type=Path,
+        help="copy a benchmark fixture into a temporary Git repository before optimizing",
+    )
     fix.add_argument("--baseline-ref", default="HEAD")
     fix.add_argument("--benchmark", type=_command, required=True)
     fix.add_argument("--test", type=_command, required=True)
@@ -129,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--output", type=Path, default=Path(".perf-engineer/fixes"))
     fix.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
+    )
+    fix.add_argument(
+        "--calibration-summary",
+        action="store_true",
+        help="print a compact adaptive calibration summary after the optimization result",
     )
 
     arena = subparsers.add_parser("arena", help="run a provider against PerfArena")
@@ -188,11 +241,33 @@ def main(argv: list[str] | None = None) -> int:
             benchmark_result = run_benchmark(
                 args.command,
                 cwd=args.cwd,
-                rounds=args.rounds,
+                    rounds=args.rounds,
                 warmups=args.warmups,
                 timeout=args.timeout,
             )
             print(json.dumps(asdict(benchmark_result), indent=2))
+            return 0
+
+        if args.action == "calibrate":
+            baseline, candidate = run_adaptive_paired_benchmarks(
+                args.benchmark,
+                baseline_cwd=args.baseline,
+                candidate_cwd=args.candidate,
+                minimum_rounds=args.rounds,
+                    maximum_rounds=max(args.rounds, args.maximum_rounds),
+                warmups=args.warmups,
+            )
+            calibration_payload: dict[str, Any] = {
+                "calibration": {
+                    "probe_seconds": baseline.calibration_probe_seconds,
+                    "repetitions_per_sample": baseline.repetitions_per_sample,
+                    "measurement_rounds": baseline.measurement_rounds,
+                    "total_measurement_seconds": baseline.total_measurement_seconds,
+                },
+                "baseline": asdict(baseline),
+                "candidate": asdict(candidate),
+            }
+            print(json.dumps(calibration_payload, indent=2))
             return 0
 
         if args.action == "profile":
@@ -200,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
             profile_result = profiler.profile(
                 args.command,
                 cwd=args.cwd,
-                policy=ExecutionPolicy(
+                    policy=ExecutionPolicy(
                     timeout_seconds=args.timeout,
                     memory_bytes=args.memory_mb * 1024 * 1024,
                 ),
@@ -217,14 +292,17 @@ def main(argv: list[str] | None = None) -> int:
                 repository=args.repository,
                 baseline_ref=args.baseline_ref,
                 candidate_ref=args.candidate_ref,
-                benchmark_command=args.benchmark,
-                test_command=args.test,
+                    benchmark_command=args.benchmark,
+                    test_command=args.test,
                 rounds=args.rounds,
-                minimum_improvement_percent=args.minimum_improvement,
+                    minimum_improvement_percent=args.minimum_improvement,
             )
             destination = save_record(record, args.output)
-            payload = {**record.to_dict(), "record_path": str(destination)}
-            print(json.dumps(payload, indent=2))
+            experiment_payload: dict[str, Any] = {
+                **record.to_dict(),
+                "record_path": str(destination),
+            }
+            print(json.dumps(experiment_payload, indent=2))
             return 0 if record.result.decision == "accept" else 2
 
         if args.action == "optimize":
@@ -258,35 +336,41 @@ def main(argv: list[str] | None = None) -> int:
                 benchmark_command=args.benchmark,
                 test_command=args.test,
                 rounds=args.rounds,
-                maximum_candidates=args.maximum_candidates,
+                    maximum_candidates=args.maximum_candidates,
                 minimum_improvement_percent=args.minimum_improvement,
                 maximum_rounds=args.maximum_rounds,
-                maximum_memory_regression_percent=args.maximum_memory_regression,
-                maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                profile_guidance=args.profile_guidance == "auto",
-                maximum_provider_attempts=args.maximum_provider_attempts,
-                runner=runner,
+                    maximum_memory_regression_percent=args.maximum_memory_regression,
+                    maximum_cpu_regression_percent=args.maximum_cpu_regression,
+                    profile_guidance=args.profile_guidance == "auto",
+                    maximum_provider_attempts=args.maximum_provider_attempts,
+                    runner=runner,
                 policy=policy,
                 audit_logger=AuditLogger(args.audit_log),
             )
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
-            payload = {
+            optimization_payload: dict[str, Any] = {
                 **optimization.to_dict(),
                 "record_path": str(record_path),
                 "winner_patch_path": str(patch_path) if patch_path else None,
             }
-            print(json.dumps(payload, indent=2))
+            print(json.dumps(optimization_payload, indent=2))
             return 0 if optimization.winner_id else 2
 
         if args.action == "fix":
             policy = ExecutionPolicy(
                 timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
             )
-            optimization = optimize(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                provider=DeterministicFixProvider(),
+            fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
+            try:
+                optimization = optimize(
+                    repository=(
+                        Path(fixture_repository.name)
+                        if fixture_repository is not None
+                        else args.repository
+                    ),
+                    baseline_ref=args.baseline_ref,
+                    provider=DeterministicFixProvider(),
                 benchmark_command=args.benchmark,
                 test_command=args.test,
                 rounds=args.rounds,
@@ -299,15 +383,50 @@ def main(argv: list[str] | None = None) -> int:
                 maximum_provider_attempts=1,
                 runner=LocalProcessRunner(),
                 policy=policy,
-            )
+                )
+            finally:
+                if fixture_repository is not None:
+                    fixture_repository.cleanup()
             record_path = save_optimization(optimization, args.output)
             patch_path = export_winning_patch(optimization, args.output_patch)
-            payload = {
+            fix_payload: dict[str, Any] = {
                 **optimization.to_dict(),
                 "record_path": str(record_path),
                 "winner_patch_path": str(patch_path) if patch_path else None,
             }
-            print(json.dumps(payload, indent=2))
+            print(json.dumps(fix_payload, indent=2))
+            if args.calibration_summary:
+                measured = next(
+                    (
+                        item.result
+                        for item in optimization.evaluations
+                        if item.result is not None
+                    ),
+                    None,
+                )
+                if measured is not None:
+                    baseline = measured.baseline
+                    print("\nAdaptive benchmark calibration")
+                    print(
+                        f"Probe duration:          "
+                        f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
+                    )
+                    print(
+                        f"Repetitions per sample:  {baseline.repetitions_per_sample}"
+                    )
+                    print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
+                    print(
+                        f"Total measured duration: "
+                        f"{baseline.total_measurement_seconds or 0.0:.6f} s"
+                    )
+                    print("\nVerification")
+                    print(f"Median speedup:          {measured.speedup_percent:.2f}%")
+                    print(
+                        f"95% CI:                  "
+                        f"[{measured.speedup_ci95_low:.2f}%, "
+                        f"{measured.speedup_ci95_high:.2f}%]"
+                    )
+                    print(f"Decision:                {measured.decision.value.upper()}")
             return 0 if optimization.winner_id else 2
 
         if args.action == "arena":
@@ -356,12 +475,12 @@ def main(argv: list[str] | None = None) -> int:
             append_run(args.history, evaluation)
             args.report.parent.mkdir(parents=True, exist_ok=True)
             args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
-            payload = {
+            evaluation_payload: dict[str, Any] = {
                 **evaluation.to_dict(),
                 "regressions": [asdict(item) for item in regressions],
                 "report_path": str(args.report),
             }
-            print(json.dumps(payload, indent=2))
+            print(json.dumps(evaluation_payload, indent=2))
             return 3 if regressions else 0
 
         correctness = run_correctness(args.test, cwd=args.candidate)

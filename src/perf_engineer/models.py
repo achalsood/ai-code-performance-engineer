@@ -32,6 +32,10 @@ class BenchmarkResult:
     max_seconds: float
     cpu_mean_seconds: float = 0.0
     peak_memory_bytes: int = 0
+    calibration_probe_seconds: float | None = None
+    repetitions_per_sample: int = 1
+    measurement_rounds: int | None = None
+    total_measurement_seconds: float | None = None
 
 
 @dataclass(frozen=True)

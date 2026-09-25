@@ -31,9 +31,28 @@ def test_runner_reports_per_process_memory(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "import time; data = bytearray(8_000_000); time.sleep(0.05)",
+            "import time; data = bytearray(32_000_000); time.sleep(0.15)",
         ],
         cwd=tmp_path,
         policy=ExecutionPolicy(),
     )
-    assert result.peak_memory_bytes >= 8_000_000
+    assert result.peak_memory_bytes >= 16_000_000
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process-tree memory regression")
+def test_windows_tree_memory_does_not_sum_historical_process_peaks(tmp_path: Path) -> None:
+    result = LocalProcessRunner().run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import subprocess, sys, time; "
+                "[subprocess.run([sys.executable, '-c', "
+                "'data=bytearray(20_000_000)']) for _ in range(4)]; "
+                "time.sleep(0.05)"
+            ),
+        ],
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    )
+    assert result.peak_memory_bytes < 100_000_000

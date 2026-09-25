@@ -25,71 +25,114 @@ class DeterministicFixProvider:
             source = request.files.get(path)
             if source is None or not path.endswith(".py"):
                 continue
-            rewrite = _rewrite_python(source)
-            if rewrite is None or rewrite.source == source:
-                continue
-            patch = "".join(
-                difflib.unified_diff(
-                    source.splitlines(keepends=True),
-                    rewrite.source.splitlines(keepends=True),
-                    fromfile=f"a/{path}",
-                    tofile=f"b/{path}",
+            for rewrite in _rewrite_python_plans(source):
+                if rewrite.source == source:
+                    continue
+                normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
+                normalized_rewrite = rewrite.source.replace("\r\n", "\n").replace("\r", "\n")
+                patch = "".join(
+                    difflib.unified_diff(
+                        normalized_source.splitlines(keepends=True),
+                        normalized_rewrite.splitlines(keepends=True),
+                        fromfile=f"a/{path}",
+                        tofile=f"b/{path}",
+                    )
                 )
-            )
-            patch = f"diff --git a/{path} b/{path}\n" + patch
-            candidates.append(
-                OptimizationCandidate(
-                    candidate_id=f"deterministic-{len(candidates) + 1}",
-                    title=rewrite.title,
-                    rationale=rewrite.rationale,
-                    patch=patch,
-                    strategy=rewrite.strategy,
-                    expected_impact="Remove repeated linear work from a hot loop.",
-                    risk="medium; verification remains mandatory",
+                patch = f"diff --git a/{path} b/{path}\n" + patch
+                candidates.append(
+                    OptimizationCandidate(
+                        candidate_id=f"deterministic-{len(candidates) + 1}",
+                        title=rewrite.title,
+                        rationale=rewrite.rationale,
+                        patch=patch,
+                        strategy=rewrite.strategy,
+                        expected_impact="Remove repeated linear work from a hot loop.",
+                        risk="medium; verification remains mandatory",
+                    )
                 )
-            )
-            if len(candidates) >= request.maximum_candidates:
-                break
+                if len(candidates) >= request.maximum_candidates:
+                    return candidates
         return candidates
 
 
-def _rewrite_python(source: str) -> _Rewrite | None:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-    count_transformer = _LinearCountTransformer()
-    rewritten = count_transformer.visit(tree)
-    if count_transformer.changed:
-        _ensure_counter_import(rewritten)
-        ast.fix_missing_locations(rewritten)
-        return _Rewrite(
+def _rewrite_python_plans(source: str) -> list[_Rewrite]:
+    specs = (
+        (
+            _MembershipIndexTransformer,
+            "Index repeated membership lookups",
+            "Builds a set once and reuses it for repeated membership tests inside a loop.",
+            "membership-index",
+        ),
+        (
+            _LinearCountTransformer,
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
-            ast.unparse(rewritten) + "\n",
-        )
-
-    hoist_transformer = _InvariantAllocationTransformer()
-    rewritten = hoist_transformer.visit(tree)
-    if hoist_transformer.changed:
-        ast.fix_missing_locations(rewritten)
-        return _Rewrite(
+        ),
+        (
+            _InvariantAllocationTransformer,
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
+        ),
+        (
+            _BatchedNestedLookupTransformer,
+            "Index repeated nested lookup",
+            "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
+            "nested-loop-index",
+        ),
+    )
+    applicable: list[tuple[type[ast.NodeTransformer], str, str, str]] = []
+    plans: list[_Rewrite] = []
+    for transformer_type, title, rationale, strategy in specs:
+        rewrite = _apply_transformers(source, ((transformer_type, title, rationale, strategy),))
+        if rewrite is not None:
+            applicable.append((transformer_type, title, rationale, strategy))
+            plans.append(rewrite)
+    if len(applicable) > 1:
+        combined = _apply_transformers(source, tuple(applicable))
+        if combined is not None:
+            plans.append(combined)
+    return plans
+
+
+def _rewrite_python(source: str) -> _Rewrite | None:
+    plans = _rewrite_python_plans(source)
+    return plans[-1] if plans else None
+
+
+def _apply_transformers(
+    source: str,
+    specs: tuple[tuple[type[ast.NodeTransformer], str, str, str], ...],
+) -> _Rewrite | None:
+    try:
+        rewritten: ast.AST = ast.parse(source)
+    except SyntaxError:
+        return None
+    applied: list[_Rewrite] = []
+    for transformer_type, title, rationale, strategy in specs:
+        transformer = transformer_type()
+        rewritten = transformer.visit(rewritten)
+        if not getattr(transformer, "changed", False):
+            continue
+        if isinstance(transformer, _LinearCountTransformer):
+            _ensure_counter_import(rewritten)
+        ast.fix_missing_locations(rewritten)
+        applied.append(_Rewrite(title, rationale, strategy, ""))
+    if not applied:
+        return None
+    if len(applied) == 1:
+        selected = applied[0]
+        return _Rewrite(
+            selected.title,
+            selected.rationale,
+            selected.strategy,
             ast.unparse(rewritten) + "\n",
         )
-
-    lookup_transformer = _BatchedNestedLookupTransformer()
-    rewritten = lookup_transformer.visit(tree)
-    if not lookup_transformer.changed:
-        return None
-    ast.fix_missing_locations(rewritten)
     return _Rewrite(
-        "Index repeated nested lookup",
-        "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
-        "nested-loop-index",
+        "Apply compatible performance fixes",
+        "Combines conservative optimizations that target independent repeated work.",
+        "combined:" + "+".join(item.strategy for item in applied),
         ast.unparse(rewritten) + "\n",
     )
 
@@ -121,6 +164,214 @@ def _ensure_counter_import(tree: ast.AST) -> None:
         insert_at,
         ast.ImportFrom(module="collections", names=[ast.alias(name="Counter")], level=0),
     )
+
+
+class _MembershipIndexTransformer(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self.changed = False
+        self.index = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        used_names = {
+            child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+        }
+        new_body: list[ast.stmt] = []
+        for statement_index, statement in enumerate(node.body):
+            if isinstance(statement, ast.For):
+                replacement = self._rewrite_loop(
+                    statement, node.body[:statement_index], used_names
+                )
+                if replacement is not None:
+                    setup, loop = replacement
+                    new_body.extend((setup, loop))
+                    self.changed = True
+                    continue
+            new_body.append(statement)
+        node.body = new_body
+        return node
+
+    def _rewrite_loop(
+        self,
+        loop: ast.For,
+        preceding_statements: list[ast.stmt],
+        used_names: set[str],
+    ) -> tuple[ast.Assign, ast.For] | None:
+        matches = [
+            compare
+            for compare in ast.walk(loop)
+            if isinstance(compare, ast.Compare)
+            and len(compare.ops) == 1
+            and isinstance(compare.ops[0], (ast.In, ast.NotIn))
+            and len(compare.comparators) == 1
+            and isinstance(compare.comparators[0], ast.Name)
+        ]
+        if not matches:
+            return None
+        collections = {
+            compare.comparators[0].id
+            for compare in matches
+            if isinstance(compare.comparators[0], ast.Name)
+        }
+        if len(collections) != 1:
+            return None
+        collection = next(iter(collections))
+        loop_names = {
+            child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
+        }
+        aliases = _aliases_before_loop(preceding_statements, collection)
+        if collection in loop_names or any(
+            _name_is_mutated(loop, alias)
+            or _name_is_passed_to_unknown_call(loop, alias)
+            for alias in aliases
+        ):
+            return None
+        if not all(
+            _membership_probe_is_hash_safe(compare.left, loop) for compare in matches
+        ):
+            return None
+        if not _membership_collection_is_statically_hash_safe(
+            preceding_statements, collection
+        ):
+            return None
+
+        index_name = _fresh_generated_name("_perf_membership_", self.index, used_names)
+        used_names.add(index_name)
+        self.index = int(index_name.rsplit("_", 1)[1]) + 1
+        setup = ast.Assign(
+            targets=[ast.Name(id=index_name, ctx=ast.Store())],
+            value=ast.Call(
+                func=ast.Name(id="set", ctx=ast.Load()),
+                args=[ast.Name(id=collection, ctx=ast.Load())],
+                keywords=[],
+            ),
+        )
+        rewritten_loop = _MembershipCollectionReplacer(
+            collection, index_name
+        ).visit(loop)
+        assert isinstance(rewritten_loop, ast.For)
+        return setup, rewritten_loop
+
+
+def _aliases_before_loop(
+    preceding_statements: list[ast.stmt], name: str
+) -> set[str]:
+    aliases = {name}
+    changed = True
+    while changed:
+        changed = False
+        for statement in preceding_statements:
+            for node in ast.walk(statement):
+                if (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                    and node.targets[0].id not in aliases
+                ):
+                    aliases.add(node.targets[0].id)
+                    changed = True
+    return aliases
+
+
+def _fresh_generated_name(prefix: str, start: int, used_names: set[str]) -> str:
+    index = start
+    while f"{prefix}{index}" in used_names:
+        index += 1
+    return f"{prefix}{index}"
+
+
+def _membership_collection_is_statically_hash_safe(
+    preceding_statements: list[ast.stmt], collection: str
+) -> bool:
+    for statement in reversed(preceding_statements):
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == collection
+        ):
+            value = statement.value
+            if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+                return all(
+                    isinstance(element, ast.Constant)
+                    and isinstance(
+                        element.value,
+                        (str, bytes, int, float, complex, bool, type(None)),
+                    )
+                    for element in value.elts
+                )
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "range"
+            ):
+                return True
+            return (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id in {"list", "tuple", "set"}
+                and len(value.args) == 1
+                and isinstance(value.args[0], ast.Call)
+                and isinstance(value.args[0].func, ast.Name)
+                and value.args[0].func.id == "range"
+                and not value.keywords
+            )
+    return False
+
+
+def _membership_probe_is_hash_safe(expression: ast.expr, loop: ast.For) -> bool:
+    if isinstance(expression, ast.Constant):
+        return isinstance(
+            expression.value, (str, bytes, int, float, complex, bool, type(None))
+        )
+    if not isinstance(expression, ast.Name):
+        return False
+    loop_names = {
+        child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
+    }
+    if expression.id not in loop_names:
+        return False
+    return _loop_iterable_is_statically_hash_safe(loop.iter)
+
+
+def _loop_iterable_is_statically_hash_safe(iterable: ast.expr) -> bool:
+    if isinstance(iterable, (ast.List, ast.Tuple, ast.Set)):
+        return all(
+            isinstance(element, ast.Constant)
+            and isinstance(
+                element.value,
+                (str, bytes, int, float, complex, bool, type(None)),
+            )
+            for element in iterable.elts
+        )
+    return (
+        isinstance(iterable, ast.Call)
+        and isinstance(iterable.func, ast.Name)
+        and iterable.func.id == "range"
+    )
+
+
+class _MembershipCollectionReplacer(ast.NodeTransformer):
+    def __init__(self, collection: str, index_name: str) -> None:
+        self.collection = collection
+        self.index_name = index_name
+
+    def visit_Compare(self, node: ast.Compare) -> ast.AST:
+        self.generic_visit(node)
+        if (
+            len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.In, ast.NotIn))
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Name)
+            and node.comparators[0].id == self.collection
+        ):
+            node.comparators[0] = ast.copy_location(
+                ast.Name(id=self.index_name, ctx=ast.Load()),
+                node.comparators[0],
+            )
+        return node
 
 
 class _LinearCountTransformer(ast.NodeTransformer):

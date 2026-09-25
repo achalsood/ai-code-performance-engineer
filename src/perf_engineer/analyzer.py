@@ -58,6 +58,23 @@ class PerformanceVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._loop_depth -= 1
 
+    def visit_Compare(self, node: ast.Compare) -> None:
+        if (
+            self._loop_depth
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.In, ast.NotIn))
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Name)
+        ):
+            self._add(
+                "PERF004",
+                node,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            )
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         function_name = node.func.id if isinstance(node.func, ast.Name) else None
         if self._loop_depth and function_name in {"sorted", "list"}:
