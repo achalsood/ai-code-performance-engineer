@@ -103,3 +103,57 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert result.provider_attempts == 2
     assert provider.requests[1].attempt_number == 2
     assert "invalid" in provider.requests[1].feedback[0]
+
+
+def test_deterministic_fixer_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
+    from perf_engineer.fixers import DeterministicFixProvider
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def frequencies(items):
+    result = []
+    for item in items:
+        result.append(items.count(item))
+    return result
+
+items = list(range(2000)) * 2
+for _ in range(8):
+    frequencies(items)
+"""
+    )
+    (repository / "test_correctness.py").write_text(
+        """from workload import frequencies
+
+assert frequencies([3, 1, 3, 2, 3]) == [3, 1, 3, 1, 3]
+assert frequencies([]) == []
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "test_correctness.py"],
+        rounds=5,
+        maximum_rounds=9,
+        minimum_improvement_percent=5.0,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert result.winner_id == "deterministic-1"
+    evaluation = result.evaluations[0]
+    assert evaluation.status == "accept"
+    assert evaluation.result is not None
+    assert evaluation.result.correctness_passed
+    assert evaluation.result.speedup_percent >= 5.0
+    assert evaluation.result.speedup_ci95_low >= 5.0
+    assert evaluation.changed_paths == ("workload.py",)
