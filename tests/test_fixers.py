@@ -917,10 +917,17 @@ def test_deterministic_provider_composes_independent_optimizations() -> None:
 
     candidates = DeterministicFixProvider().generate(request)
 
-    assert len(candidates) == 1
-    candidate = candidates[0]
-    assert candidate.title == "Apply compatible performance fixes"
-    assert candidate.strategy == "combined:membership-index+hoist-invariant-work"
-    assert "_perf_membership_0 = set(values)" in candidate.patch
-    assert "query in _perf_membership_0" in candidate.patch
-    assert "_perf_invariant_0 = sorted(ordered_source)" in candidate.patch
+    assert len(candidates) == 3
+    assert [candidate.strategy for candidate in candidates] == [
+        "membership-index",
+        "hoist-invariant-work",
+        "combined:membership-index+hoist-invariant-work",
+    ]
+    membership, hoist, combined = candidates
+    assert "_perf_membership_0 = set(values)" in membership.patch
+    assert "_perf_invariant_0" not in membership.patch
+    assert "_perf_invariant_0 = sorted(ordered_source)" in hoist.patch
+    assert "_perf_membership_0" not in hoist.patch
+    assert "_perf_membership_0 = set(values)" in combined.patch
+    assert "query in _perf_membership_0" in combined.patch
+    assert "_perf_invariant_0 = sorted(ordered_source)" in combined.patch
