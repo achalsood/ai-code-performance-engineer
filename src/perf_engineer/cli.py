@@ -157,7 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--maximum-rounds", type=_positive_int, default=21)
     optimize_parser.add_argument("--maximum-candidates", type=_positive_int, default=3)
     optimize_parser.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
-    optimize_parser.add_argument("--maximum-memory-regression", type=_nonnegative_float, default=10.0)
+    optimize_parser.add_argument(
+        "--maximum-memory-regression", type=_nonnegative_float, default=10.0
+    )
     optimize_parser.add_argument("--maximum-cpu-regression", type=_nonnegative_float, default=10.0)
     optimize_parser.add_argument("--profile-guidance", choices=("auto", "off"), default="auto")
     optimize_parser.add_argument("--maximum-provider-attempts", type=_positive_int, default=2)
