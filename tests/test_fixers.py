@@ -417,10 +417,10 @@ def test_deterministic_provider_refuses_count_when_collection_escapes() -> None:
 
 
 def test_deterministic_provider_indexes_repeated_membership() -> None:
-    source = """def present(queries):
+    source = """def present():
     values = [1, 2, 3, 4, 5]
     result = []
-    for query in queries:
+    for query in range(10):
         result.append(query in values)
     return result
 """
@@ -670,3 +670,59 @@ def test_deterministic_provider_refuses_membership_when_alias_escapes() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_for_unknown_probe_elements() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_membership_for_hash_safe_probe_range() -> None:
+    source = """def present():
+    values = list(range(1000))
+    result = []
+    for query in range(2000):
+        result.append(query not in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+    assert "query not in _perf_membership_0" in patch
