@@ -141,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
     )
+    fix.add_argument(
+        "--calibration-summary",
+        action="store_true",
+        help="print a compact adaptive calibration summary after the optimization result",
+    )
 
     arena = subparsers.add_parser("arena", help="run a provider against PerfArena")
     arena.add_argument("--corpus", type=Path, required=True)
@@ -344,6 +349,38 @@ def main(argv: list[str] | None = None) -> int:
                 "winner_patch_path": str(patch_path) if patch_path else None,
             }
             print(json.dumps(fix_payload, indent=2))
+            if args.calibration_summary:
+                measured = next(
+                    (
+                        item.result
+                        for item in optimization.evaluations
+                        if item.result is not None
+                    ),
+                    None,
+                )
+                if measured is not None:
+                    baseline = measured.baseline
+                    print("\nAdaptive benchmark calibration")
+                    print(
+                        f"Probe duration:          "
+                        f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
+                    )
+                    print(
+                        f"Repetitions per sample:  {baseline.repetitions_per_sample}"
+                    )
+                    print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
+                    print(
+                        f"Total measured duration: "
+                        f"{baseline.total_measurement_seconds or 0.0:.6f} s"
+                    )
+                    print("\nVerification")
+                    print(f"Median speedup:          {measured.speedup_percent:.2f}%")
+                    print(
+                        f"95% CI:                  "
+                        f"[{measured.speedup_ci95_low:.2f}%, "
+                        f"{measured.speedup_ci95_high:.2f}%]"
+                    )
+                    print(f"Decision:                {measured.decision.value.upper()}")
             return 0 if optimization.winner_id else 2
 
         if args.action == "arena":
