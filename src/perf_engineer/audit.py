@@ -10,9 +10,11 @@ from typing import IO, Any
 
 def _lock_stream(stream: IO[str]) -> None:
     if os.name == "posix":
-        import fcntl  # type: ignore[import-not-found]
+        import fcntl
 
-        fcntl.flock(stream, fcntl.LOCK_EX)
+        fcntl.flock(  # type: ignore[attr-defined]
+            stream, fcntl.LOCK_EX  # type: ignore[attr-defined]
+        )
         return
     import msvcrt
 
