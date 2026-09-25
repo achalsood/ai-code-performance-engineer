@@ -309,3 +309,122 @@ def _name_is_mutated(loop: ast.For, name: str) -> bool:
         ):
             return True
     return False
+
+
+class _NestedEqualityLookupTransformer(ast.NodeTransformer):
+    """Optimize a deliberately narrow nested dictionary-record lookup pattern."""
+
+    def __init__(self) -> None:
+        self.changed = False
+        self.index = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        new_body: list[ast.stmt] = []
+        for statement in node.body:
+            replacement = self._rewrite_outer_loop(statement) if isinstance(statement, ast.For) else None
+            if replacement is None:
+                new_body.append(statement)
+                continue
+            setup, rewritten = replacement
+            new_body.extend((setup, rewritten))
+            self.changed = True
+        node.body = new_body
+        return node
+
+    def _rewrite_outer_loop(self, outer: ast.For) -> tuple[ast.Assign, ast.For] | None:
+        if not isinstance(outer.target, ast.Name) or len(outer.body) != 1:
+            return None
+        inner = outer.body[0]
+        if not isinstance(inner, ast.For) or not isinstance(inner.target, ast.Name):
+            return None
+        if not isinstance(inner.iter, ast.Name) or len(inner.body) != 1 or inner.orelse:
+            return None
+        condition = inner.body[0]
+        if not isinstance(condition, ast.If) or len(condition.body) != 1 or condition.orelse:
+            return None
+        returned = condition.body[0]
+        if not isinstance(returned, ast.Return) or not isinstance(returned.value, ast.Name):
+            return None
+        if returned.value.id != inner.target.id:
+            return None
+        keys = _equality_lookup_keys(condition.test, inner.target.id, outer.target.id)
+        if keys is None or _name_is_mutated(outer, inner.iter.id):
+            return None
+        record_key, query_key = keys
+        index_name = f"_perf_lookup_{self.index}"
+        self.index += 1
+        setup = _lookup_index_assignment(index_name, inner.target.id, inner.iter.id, record_key)
+        lookup = ast.Return(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id=index_name, ctx=ast.Load()),
+                    attr="get",
+                    ctx=ast.Load(),
+                ),
+                args=[_string_subscript(outer.target.id, query_key)],
+                keywords=[],
+            )
+        )
+        rewritten = ast.For(
+            target=outer.target,
+            iter=outer.iter,
+            body=[lookup],
+            orelse=outer.orelse,
+            type_comment=outer.type_comment,
+        )
+        return setup, ast.copy_location(rewritten, outer)
+
+
+def _equality_lookup_keys(test: ast.expr, record: str, query: str) -> tuple[str, str] | None:
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
+        return None
+    left_record = _subscript_key(test.left, record)
+    right_query = _subscript_key(test.comparators[0], query)
+    if left_record is not None and right_query is not None:
+        return left_record, right_query
+    right_record = _subscript_key(test.comparators[0], record)
+    left_query = _subscript_key(test.left, query)
+    if right_record is not None and left_query is not None:
+        return right_record, left_query
+    return None
+
+
+def _subscript_key(expression: ast.expr, variable: str) -> str | None:
+    if not isinstance(expression, ast.Subscript):
+        return None
+    if not isinstance(expression.value, ast.Name) or expression.value.id != variable:
+        return None
+    if isinstance(expression.slice, ast.Constant) and isinstance(expression.slice.value, str):
+        return expression.slice.value
+    return None
+
+
+def _string_subscript(variable: str, key: str) -> ast.Subscript:
+    return ast.Subscript(
+        value=ast.Name(id=variable, ctx=ast.Load()),
+        slice=ast.Constant(value=key),
+        ctx=ast.Load(),
+    )
+
+
+def _lookup_index_assignment(
+    index_name: str, record_name: str, records_name: str, record_key: str
+) -> ast.Assign:
+    return ast.Assign(
+        targets=[ast.Name(id=index_name, ctx=ast.Store())],
+        value=ast.DictComp(
+            key=_string_subscript(record_name, record_key),
+            value=ast.Name(id=record_name, ctx=ast.Load()),
+            generators=[
+                ast.comprehension(
+                    target=ast.Name(id=record_name, ctx=ast.Store()),
+                    iter=ast.Name(id=records_name, ctx=ast.Load()),
+                    ifs=[],
+                    is_async=0,
+                )
+            ],
+        ),
+    )
