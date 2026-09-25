@@ -270,4 +270,5 @@ def frequencies(items):
         maximum_candidates=3,
     )
     patch = DeterministicFixProvider().generate(request)[0].patch
-    assert patch.count("from collections import Counter") == 1
+    assert "+from collections import Counter" not in patch
+    assert "+    _perf_counts_0 = Counter(items)" in patch
