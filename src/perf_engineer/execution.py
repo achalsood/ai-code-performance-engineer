@@ -126,7 +126,7 @@ def _resident_memory_bytes(process_id: int) -> int:
             wintypes.DWORD,
         ]
         psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-        handle = kernel32.OpenProcess(0x0400 | 0x0010, False, process_id)
+        handle = kernel32.OpenProcess(0x1000 | 0x0010, False, process_id)
         if not handle:
             return 0
         try:
@@ -136,7 +136,7 @@ def _resident_memory_bytes(process_id: int) -> int:
                 handle, ctypes.byref(counters), counters.cb
             ):
                 return 0
-            return int(max(counters.PeakWorkingSetSize, counters.PeakPagefileUsage))
+            return int(max(counters.PeakWorkingSetSize, counters.PeakPagefileUsage, counters.WorkingSetSize, counters.PagefileUsage))
         finally:
             kernel32.CloseHandle(handle)
     try:
