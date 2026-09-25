@@ -25,71 +25,103 @@ class DeterministicFixProvider:
             source = request.files.get(path)
             if source is None or not path.endswith(".py"):
                 continue
-            rewrite = _rewrite_python(source)
-            if rewrite is None or rewrite.source == source:
-                continue
-            normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
-            normalized_rewrite = rewrite.source.replace("\r\n", "\n").replace("\r", "\n")
-            patch = "".join(
-                difflib.unified_diff(
-                    normalized_source.splitlines(keepends=True),
-                    normalized_rewrite.splitlines(keepends=True),
-                    fromfile=f"a/{path}",
-                    tofile=f"b/{path}",
+            for rewrite in _rewrite_python_plans(source):
+                if rewrite.source == source:
+                    continue
+                normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
+                normalized_rewrite = rewrite.source.replace("\r\n", "\n").replace("\r", "\n")
+                patch = "".join(
+                    difflib.unified_diff(
+                        normalized_source.splitlines(keepends=True),
+                        normalized_rewrite.splitlines(keepends=True),
+                        fromfile=f"a/{path}",
+                        tofile=f"b/{path}",
+                    )
                 )
-            )
-            patch = f"diff --git a/{path} b/{path}\n" + patch
-            candidates.append(
-                OptimizationCandidate(
-                    candidate_id=f"deterministic-{len(candidates) + 1}",
-                    title=rewrite.title,
-                    rationale=rewrite.rationale,
-                    patch=patch,
-                    strategy=rewrite.strategy,
-                    expected_impact="Remove repeated linear work from a hot loop.",
-                    risk="medium; verification remains mandatory",
+                patch = f"diff --git a/{path} b/{path}\n" + patch
+                candidates.append(
+                    OptimizationCandidate(
+                        candidate_id=f"deterministic-{len(candidates) + 1}",
+                        title=rewrite.title,
+                        rationale=rewrite.rationale,
+                        patch=patch,
+                        strategy=rewrite.strategy,
+                        expected_impact="Remove repeated linear work from a hot loop.",
+                        risk="medium; verification remains mandatory",
+                    )
                 )
-            )
-            if len(candidates) >= request.maximum_candidates:
-                break
+                if len(candidates) >= request.maximum_candidates:
+                    return candidates
         return candidates
 
 
-def _rewrite_python(source: str) -> _Rewrite | None:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
+_TRANSFORMER_SPECS = (
+    (
+        _MembershipIndexTransformer if "_MembershipIndexTransformer" in globals() else None,
+        "Index repeated membership lookups",
+        "Builds a set once and reuses it for repeated membership tests inside a loop.",
+        "membership-index",
+    ),
+)
 
-    applied: list[_Rewrite] = []
-    transformers: tuple[tuple[ast.NodeTransformer, str, str, str], ...] = (
+
+def _rewrite_python_plans(source: str) -> list[_Rewrite]:
+    specs = (
         (
-            _MembershipIndexTransformer(),
+            _MembershipIndexTransformer,
             "Index repeated membership lookups",
             "Builds a set once and reuses it for repeated membership tests inside a loop.",
             "membership-index",
         ),
         (
-            _LinearCountTransformer(),
+            _LinearCountTransformer,
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
         ),
         (
-            _InvariantAllocationTransformer(),
+            _InvariantAllocationTransformer,
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
         ),
         (
-            _BatchedNestedLookupTransformer(),
+            _BatchedNestedLookupTransformer,
             "Index repeated nested lookup",
             "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
             "nested-loop-index",
         ),
     )
-    rewritten: ast.AST = tree
-    for transformer, title, rationale, strategy in transformers:
+    applicable: list[tuple[type[ast.NodeTransformer], str, str, str]] = []
+    plans: list[_Rewrite] = []
+    for transformer_type, title, rationale, strategy in specs:
+        rewrite = _apply_transformers(source, ((transformer_type, title, rationale, strategy),))
+        if rewrite is not None:
+            applicable.append((transformer_type, title, rationale, strategy))
+            plans.append(rewrite)
+    if len(applicable) > 1:
+        combined = _apply_transformers(source, tuple(applicable))
+        if combined is not None:
+            plans.append(combined)
+    return plans
+
+
+def _rewrite_python(source: str) -> _Rewrite | None:
+    plans = _rewrite_python_plans(source)
+    return plans[-1] if plans else None
+
+
+def _apply_transformers(
+    source: str,
+    specs: tuple[tuple[type[ast.NodeTransformer], str, str, str], ...],
+) -> _Rewrite | None:
+    try:
+        rewritten: ast.AST = ast.parse(source)
+    except SyntaxError:
+        return None
+    applied: list[_Rewrite] = []
+    for transformer_type, title, rationale, strategy in specs:
+        transformer = transformer_type()
         rewritten = transformer.visit(rewritten)
         if not getattr(transformer, "changed", False):
             continue
@@ -97,7 +129,6 @@ def _rewrite_python(source: str) -> _Rewrite | None:
             _ensure_counter_import(rewritten)
         ast.fix_missing_locations(rewritten)
         applied.append(_Rewrite(title, rationale, strategy, ""))
-
     if not applied:
         return None
     if len(applied) == 1:
