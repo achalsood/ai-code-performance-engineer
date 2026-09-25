@@ -874,3 +874,53 @@ def test_deterministic_provider_refuses_preloop_alias_escape() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_composes_independent_optimizations() -> None:
+    source = """def optimize_both():
+    values = list(range(1000))
+    result = []
+    for query in range(2000):
+        result.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return result, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+            Finding(
+                "PERF002",
+                "example.py",
+                11,
+                "high",
+                "Invariant sorting executes inside a loop.",
+                "Hoist invariant sorting outside the loop.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.title == "Apply compatible performance fixes"
+    assert candidate.strategy == "combined:membership-index+hoist-invariant-work"
+    assert "_perf_membership_0 = set(values)" in candidate.patch
+    assert "query in _perf_membership_0" in candidate.patch
+    assert "_perf_invariant_0 = sorted(ordered_source)" in candidate.patch
