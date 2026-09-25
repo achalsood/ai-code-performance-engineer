@@ -89,3 +89,60 @@ def test_deterministic_provider_does_not_hoist_mutated_input() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_nested_equality_lookup() -> None:
+    source = """def find_record(records, queries):
+    for query in queries:
+        for record in records:
+            if record["id"] == query["id"]:
+                return record
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                3,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Consider indexing lookup data in a set or dictionary.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_lookup_0" in patch
+    assert "_perf_lookup_0.get(query['id'])" in patch
+
+
+def test_deterministic_provider_refuses_complex_nested_loop() -> None:
+    source = """def pairs(left, right):
+    result = []
+    for first in left:
+        for second in right:
+            result.append((first, second))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                4,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Consider indexing lookup data in a set or dictionary.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
