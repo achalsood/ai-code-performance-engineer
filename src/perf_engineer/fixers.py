@@ -287,7 +287,7 @@ def _loop_iterable_is_statically_hash_safe(iterable: ast.expr) -> bool:
         and iterable.func.id == "range"
     ):
         return True
-    return isinstance(iterable, ast.Name)
+    return False
 
 
 class _MembershipCollectionReplacer(ast.NodeTransformer):
