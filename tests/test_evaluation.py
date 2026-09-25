@@ -1,4 +1,10 @@
-from perf_engineer.evaluation import CaseResult, CorpusCase, confidence_interval, load_corpus, summarize
+from perf_engineer.evaluation import (
+    CaseResult,
+    CorpusCase,
+    confidence_interval,
+    load_corpus,
+    summarize,
+)
 from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
 
 
@@ -13,7 +19,15 @@ def case_result(speedup: float, decision: Decision = Decision.ACCEPT) -> CaseRes
         decision, speedup, True, True, "measured", baseline, candidate
     )
     case = CorpusCase(
-        "case", "description", "before", "after", ("work",), ("test",), category="algorithms", language="python"
+        "case",
+        "description",
+        "before",
+        "after",
+        ("work",),
+        ("test",),
+        category="algorithms",
+        language="python",
+
     )
     return CaseResult(case, verification)
 

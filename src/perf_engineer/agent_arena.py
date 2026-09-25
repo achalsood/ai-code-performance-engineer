@@ -141,7 +141,11 @@ def run_agent_arena(
                             minimum_improvement_percent=case.minimum_improvement_percent,
                             paired=True,
                         )
-                        status = "accepted" if verification.decision is Decision.ACCEPT else "rejected"
+                        status = (
+                            "accepted"
+                            if verification.decision is Decision.ACCEPT
+                            else "rejected"
+                        )
                         result = AgentCaseResult(
                             case.case_id, case.category, case.language, status,
                             candidate.candidate_id, verification.speedup_percent,
