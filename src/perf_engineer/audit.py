@@ -10,7 +10,7 @@ from typing import IO, Any
 
 def _lock_stream(stream: IO[str]) -> None:
     if os.name == "posix":
-        import fcntl
+        import fcntl  # type: ignore[import-not-found]
 
         fcntl.flock(stream, fcntl.LOCK_EX)
         return
