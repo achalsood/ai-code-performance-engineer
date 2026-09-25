@@ -11,7 +11,7 @@ from . import __version__
 from .agent_arena import run_agent_arena, save_agent_arena
 from .analyzer import analyze_path
 from .audit import AuditLogger
-from .benchmark import BenchmarkError, run_benchmark
+from .benchmark import BenchmarkError, run_adaptive_paired_benchmarks, run_benchmark
 from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
@@ -64,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--test", type=_command, required=True)
     verify.add_argument("--rounds", type=int, default=7)
     verify.add_argument("--minimum-improvement", type=float, default=5.0)
+
+    calibrate = subparsers.add_parser(
+        "calibrate", help="inspect adaptive benchmark calibration between two worktrees"
+    )
+    calibrate.add_argument("--baseline", type=Path, required=True)
+    calibrate.add_argument("--candidate", type=Path, required=True)
+    calibrate.add_argument("--benchmark", type=_command, required=True)
+    calibrate.add_argument("--rounds", type=int, default=7)
+    calibrate.add_argument("--maximum-rounds", type=int, default=21)
+    calibrate.add_argument("--warmups", type=int, default=2)
 
     experiment = subparsers.add_parser(
         "experiment", help="run a reproducible comparison between two Git revisions"
@@ -193,6 +203,28 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
             )
             print(json.dumps(asdict(benchmark_result), indent=2))
+            return 0
+
+        if args.action == "calibrate":
+            baseline, candidate = run_adaptive_paired_benchmarks(
+                args.benchmark,
+                baseline_cwd=args.baseline,
+                candidate_cwd=args.candidate,
+                minimum_rounds=args.rounds,
+                maximum_rounds=max(args.rounds, args.maximum_rounds),
+                warmups=args.warmups,
+            )
+            payload = {
+                "calibration": {
+                    "probe_seconds": baseline.calibration_probe_seconds,
+                    "repetitions_per_sample": baseline.repetitions_per_sample,
+                    "measurement_rounds": baseline.measurement_rounds,
+                    "total_measurement_seconds": baseline.total_measurement_seconds,
+                },
+                "baseline": asdict(baseline),
+                "candidate": asdict(candidate),
+            }
+            print(json.dumps(payload, indent=2))
             return 0
 
         if args.action == "profile":
