@@ -1,9 +1,11 @@
 {
-  "suite_name": "PerfArena seed optimization corpus",
+  "suite_name": "PerfArena 10-case optimization corpus",
   "cases": [
     {
       "case_id": "membership-index",
       "description": "Replace repeated linear membership scans with a set index.",
+      "category": "data-structures",
+      "language": "python",
       "baseline_directory": "membership-index/baseline",
       "candidate_directory": "membership-index/candidate",
       "benchmark_command": [
@@ -14,13 +16,13 @@
         "python",
         "test_correctness.py"
       ],
-      "minimum_improvement_percent": 5,
-      "category": "data-structures",
-      "language": "python"
+      "minimum_improvement_percent": 5
     },
     {
       "case_id": "hoisted-sort",
       "description": "Hoist an invariant sort outside a hot loop.",
+      "category": "repeated-work",
+      "language": "python",
       "baseline_directory": "hoisted-sort/baseline",
       "candidate_directory": "hoisted-sort/candidate",
       "benchmark_command": [
@@ -31,13 +33,13 @@
         "python",
         "test_correctness.py"
       ],
-      "minimum_improvement_percent": 5,
-      "category": "repeated-work",
-      "language": "python"
+      "minimum_improvement_percent": 5
     },
     {
       "case_id": "javascript-membership-index",
       "description": "Replace repeated JavaScript Array.includes scans with a Set index.",
+      "category": "data-structures",
+      "language": "javascript",
       "baseline_directory": "javascript-membership-index/baseline",
       "candidate_directory": "javascript-membership-index/candidate",
       "benchmark_command": [
@@ -48,9 +50,126 @@
         "node",
         "test_correctness.js"
       ],
-      "minimum_improvement_percent": 5,
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "nested-lookup-index",
+      "description": "Replace repeated linear record lookups with an indexed dictionary.",
       "category": "data-structures",
-      "language": "javascript"
+      "language": "python",
+      "baseline_directory": "nested-lookup-index/baseline",
+      "candidate_directory": "nested-lookup-index/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "preserve-dedupe-set",
+      "description": "Use a set to preserve first occurrence while avoiding quadratic duplicate scans.",
+      "category": "data-structures",
+      "language": "python",
+      "baseline_directory": "preserve-dedupe-set/baseline",
+      "candidate_directory": "preserve-dedupe-set/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "linear-flatten",
+      "description": "Replace repeated list concatenation with a linear flattening pass.",
+      "category": "algorithms",
+      "language": "python",
+      "baseline_directory": "linear-flatten/baseline",
+      "candidate_directory": "linear-flatten/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "regex-compile-hoist",
+      "description": "Hoist invariant regular-expression compilation out of a hot loop.",
+      "category": "repeated-work",
+      "language": "python",
+      "baseline_directory": "regex-compile-hoist/baseline",
+      "candidate_directory": "regex-compile-hoist/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "json-parse-hoist",
+      "description": "Avoid reparsing identical JSON configuration inside repeated record processing.",
+      "category": "parsing",
+      "language": "python",
+      "baseline_directory": "json-parse-hoist/baseline",
+      "candidate_directory": "json-parse-hoist/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "membership-batch-index",
+      "description": "Replace repeated list membership checks with a set for batched filtering.",
+      "category": "algorithms",
+      "language": "python",
+      "baseline_directory": "membership-batch-index/baseline",
+      "candidate_directory": "membership-batch-index/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
+    },
+    {
+      "case_id": "prefix-sums-linear",
+      "description": "Replace repeated prefix summation with a single running accumulation.",
+      "category": "algorithms",
+      "language": "python",
+      "baseline_directory": "prefix-sums-linear/baseline",
+      "candidate_directory": "prefix-sums-linear/candidate",
+      "benchmark_command": [
+        "python",
+        "workload.py"
+      ],
+      "test_command": [
+        "python",
+        "test_correctness.py"
+      ],
+      "minimum_improvement_percent": 5
     }
   ]
 }
