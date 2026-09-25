@@ -15,15 +15,6 @@ def _lock_stream(stream: IO[str]) -> None:
         fcntl.flock(  # type: ignore[attr-defined]
             stream, fcntl.LOCK_EX  # type: ignore[attr-defined]
         )
-        return
-    import msvcrt
-
-    stream.seek(0, os.SEEK_END)
-    if stream.tell() == 0:
-        stream.write("\0")
-        stream.flush()
-    stream.seek(0)
-    msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
 
 
 class AuditLogger:
@@ -37,14 +28,6 @@ class AuditLogger:
         with self.path.open("a+", encoding="utf-8") as stream:
             _lock_stream(stream)
             previous_hash = self._last_hash(stream)
-            if os.name == "nt":
-                stream.seek(0)
-                if stream.read(1) == "\0":
-                    stream.seek(0)
-                    remainder = stream.read()[1:]
-                    stream.seek(0)
-                    stream.truncate()
-                    stream.write(remainder)
             body = {
                 "timestamp": datetime.now(UTC).isoformat(),
                 "event": event,
