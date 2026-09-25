@@ -105,14 +105,14 @@ def _resident_memory_bytes(process_id: int) -> int:
             _fields_ = [
                 ("cb", wintypes.DWORD),
                 ("PageFaultCount", wintypes.DWORD),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
+                ("PeakWorkingSetSize", ctypes.c_ulonglong),
+                ("WorkingSetSize", ctypes.c_ulonglong),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
+                ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
+                ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
+                ("PagefileUsage", ctypes.c_ulonglong),
+                ("PeakPagefileUsage", ctypes.c_ulonglong),
             ]
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -161,14 +161,14 @@ def _windows_memory_counters(process_id: int) -> dict[str, int]:
         _fields_ = [
             ("cb", wintypes.DWORD),
             ("PageFaultCount", wintypes.DWORD),
-            ("PeakWorkingSetSize", ctypes.c_size_t),
-            ("WorkingSetSize", ctypes.c_size_t),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-            ("PagefileUsage", ctypes.c_size_t),
-            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PeakWorkingSetSize", ctypes.c_ulonglong),
+            ("WorkingSetSize", ctypes.c_ulonglong),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
+            ("PagefileUsage", ctypes.c_ulonglong),
+            ("PeakPagefileUsage", ctypes.c_ulonglong),
         ]
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
