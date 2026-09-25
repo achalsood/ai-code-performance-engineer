@@ -38,12 +38,17 @@ def apply_patch(worktree: Path, patch: str) -> tuple[str, ...]:
         if not (worktree / path).is_file():
             raise PatchValidationError(f"patch target does not exist: {path}")
     command = ["git", "-C", str(worktree), "apply", "--whitespace=error-all", "-"]
+    patch_bytes = patch.encode("utf-8")
     checked = subprocess.run(
-        command[:4] + ["--check", "-"], input=patch, text=True, capture_output=True
+        command[:4] + ["--check", "-"], input=patch_bytes, capture_output=True
     )
     if checked.returncode:
-        raise PatchValidationError(f"patch does not apply cleanly: {checked.stderr.strip()}")
-    applied = subprocess.run(command, input=patch, text=True, capture_output=True)
+        raise PatchValidationError(
+            f"patch does not apply cleanly: {checked.stderr.decode(errors='replace').strip()}"
+        )
+    applied = subprocess.run(command, input=patch_bytes, capture_output=True)
     if applied.returncode:
-        raise PatchValidationError(f"patch application failed: {applied.stderr.strip()}")
+        raise PatchValidationError(
+            f"patch application failed: {applied.stderr.decode(errors='replace').strip()}"
+        )
     return paths
