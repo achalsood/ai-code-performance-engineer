@@ -271,7 +271,7 @@ def frequencies(items):
     )
     patch = DeterministicFixProvider().generate(request)[0].patch
     assert "+from collections import Counter" not in patch
-    assert "+        _perf_counts_0 = Counter(items)" in patch
+    assert "+    _perf_counts_0 = Counter(items)" in patch
 
 
 def test_deterministic_provider_refuses_count_when_collection_mutates() -> None:
