@@ -315,7 +315,29 @@ def _name_is_mutated_after_assignment(loop: ast.For, name: str, call: ast.Call) 
         orelse=[],
         type_comment=loop.type_comment,
     )
-    return _name_is_mutated(remainder, name)
+    return _name_or_alias_is_mutated(remainder, name)
+
+
+def _name_or_alias_is_mutated(loop: ast.For, name: str) -> bool:
+    aliases = {name}
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(loop):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in aliases
+                and node.targets[0].id not in aliases
+            ):
+                aliases.add(node.targets[0].id)
+                changed = True
+    return any(
+        _name_is_mutated(loop, alias) or _name_is_passed_to_unknown_call(loop, alias)
+        for alias in aliases
+    )
 
 
 class _SpecificCallReplacer(ast.NodeTransformer):
