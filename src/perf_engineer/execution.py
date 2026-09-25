@@ -183,7 +183,7 @@ class LocalProcessRunner:
             )
             deadline = started + policy.timeout_seconds
             stopped = threading.Event()
-            monitoring_peak = 0
+            monitoring_peak = _process_group_memory_bytes(process.pid)
             violation: str | None = None
 
             def monitor() -> None:
@@ -212,7 +212,9 @@ class LocalProcessRunner:
             else:
                 process.wait()
                 cpu_seconds = 0.0
-                peak_memory_bytes = monitoring_peak
+                peak_memory_bytes = max(
+                    monitoring_peak, _process_group_memory_bytes(process.pid)
+                )
             finished = time.perf_counter()
             stopped.set()
             monitor_thread.join()
