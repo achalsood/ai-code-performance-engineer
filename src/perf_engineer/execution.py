@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import contextlib
 import os
-import resource
-import signal
 import subprocess
 import tempfile
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class ExecutionError(RuntimeError):
@@ -63,12 +61,31 @@ def sanitized_environment() -> dict[str, str]:
 
 
 def _apply_limits(policy: ExecutionPolicy) -> None:
+    import resource
+
     resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_NPROC, (policy.maximum_processes, policy.maximum_processes))
     resource.setrlimit(
         resource.RLIMIT_FSIZE, (policy.maximum_file_bytes, policy.maximum_file_bytes)
     )
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
+    if os.name == "posix":
+        return {"start_new_session": True, "preexec_fn": lambda: _apply_limits(policy)}
+    return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    if os.name == "posix":
+        import signal
+
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        return
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
 
 
 def _resident_memory_bytes(process_id: int) -> int:
@@ -111,8 +128,7 @@ class LocalProcessRunner:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=errors,
-                start_new_session=True,
-                preexec_fn=lambda: _apply_limits(policy),
+                **_popen_platform_options(policy),
             )
             deadline = started + policy.timeout_seconds
             stopped = threading.Event()
@@ -130,21 +146,26 @@ class LocalProcessRunner:
                         violation = "timeout"
                     else:
                         continue
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
+                    _terminate_process_tree(process)
                     return
 
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
-            _, status, child_usage = os.wait4(process.pid, 0)
+            if os.name == "posix":
+                _, status, child_usage = os.wait4(process.pid, 0)
+                process.returncode = os.waitstatus_to_exitcode(status)
+                cpu_seconds = child_usage.ru_utime + child_usage.ru_stime
+                peak_memory_bytes = max(
+                    monitoring_peak, int(child_usage.ru_maxrss * 1024)
+                )
+            else:
+                process.wait()
+                cpu_seconds = 0.0
+                peak_memory_bytes = monitoring_peak
             finished = time.perf_counter()
-            process.returncode = os.waitstatus_to_exitcode(status)
             stopped.set()
             monitor_thread.join()
             returncode = process.returncode
-            peak_memory_bytes = max(
-                monitoring_peak, int(child_usage.ru_maxrss * 1024)
-            )
             errors.seek(0)
             stderr = errors.read().decode("utf-8", errors="replace")[-1000:]
         if violation == "memory":
@@ -156,7 +177,7 @@ class LocalProcessRunner:
         return ExecutionResult(
             returncode=returncode,
             wall_seconds=finished - started,
-            cpu_seconds=child_usage.ru_utime + child_usage.ru_stime,
+            cpu_seconds=cpu_seconds,
             peak_memory_bytes=peak_memory_bytes,
             stderr=stderr,
         )
