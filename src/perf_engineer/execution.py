@@ -127,8 +127,8 @@ def _resident_memory_bytes(process_id: int) -> int:
         ]
         psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
         # PROCESS_QUERY_INFORMATION is required by GetProcessMemoryInfo on
-    # supported Windows versions. PROCESS_VM_READ is not needed here.
-    handle = kernel32.OpenProcess(0x0400, False, process_id)
+        # supported Windows versions. PROCESS_VM_READ is not needed here.
+        handle = kernel32.OpenProcess(0x0400, False, process_id)
         if not handle:
             return 0
         try:
