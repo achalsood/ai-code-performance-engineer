@@ -280,6 +280,26 @@ class _SpecificCallReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def _name_is_passed_to_unknown_call(loop: ast.For, name: str) -> bool:
+    safe_methods = {"append", "get", "setdefault"}
+    for node in ast.walk(loop):
+        if not isinstance(node, ast.Call):
+            continue
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == name
+            and node.func.attr in safe_methods
+        ):
+            continue
+        if any(
+            isinstance(argument, ast.Name) and argument.id == name
+            for argument in (*node.args, *(keyword.value for keyword in node.keywords))
+        ):
+            return True
+    return False
+
+
 def _name_is_mutated(loop: ast.For, name: str) -> bool:
     mutating_methods = {
         "append",
@@ -364,6 +384,8 @@ class _BatchedNestedLookupTransformer(ast.NodeTransformer):
             return None
         keys = _lookup_keys(condition.test, inner.target.id, outer.target.id)
         if keys is None or _name_is_mutated(outer, inner.iter.id):
+            return None
+        if _name_is_passed_to_unknown_call(outer, inner.iter.id):
             return None
         record_key, query_key = keys
         index_name = f"_perf_lookup_{self.index}"
