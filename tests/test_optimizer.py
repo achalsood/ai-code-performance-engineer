@@ -292,7 +292,7 @@ def test_membership_index_closes_analyze_fix_verify_loop(tmp_path: Path) -> None
     subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
     (repository / "workload.py").write_text(
         """def present(queries):
-    values = range(12000)
+    values = list(range(12000))
     result = []
     for query in queries:
         result.append(query in values)
