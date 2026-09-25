@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -97,6 +98,39 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
 
 
 def _resident_memory_bytes(process_id: int) -> int:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        handle = kernel32.OpenProcess(0x0400 | 0x0010, False, process_id)
+        if not handle:
+            return 0
+        try:
+            counters = ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb
+            ):
+                return 0
+            return int(counters.WorkingSetSize)
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
             if line.startswith("VmRSS:"):
@@ -107,6 +141,8 @@ def _resident_memory_bytes(process_id: int) -> int:
 
 
 def _process_group_memory_bytes(process_group_id: int) -> int:
+    if os.name == "nt":
+        return _resident_memory_bytes(process_group_id)
     total = 0
     try:
         process_directories = (path for path in Path("/proc").iterdir() if path.name.isdigit())
@@ -121,7 +157,6 @@ def _process_group_memory_bytes(process_group_id: int) -> int:
     except (FileNotFoundError, PermissionError):
         return 0
     return total
-
 
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
