@@ -60,7 +60,7 @@ def sanitized_environment() -> dict[str, str]:
     return environment
 
 
-def _apply_limits(policy: ExecutionPolicy) -> None:
+def _apply_limits(policy: ExecutionPolicy) -> None:  # pragma: no cover - POSIX only
     import resource
 
     resource_api = cast(Any, resource)
@@ -152,12 +152,13 @@ def _resident_memory_bytes(process_id: int) -> int:
             )
         finally:
             kernel32.CloseHandle(handle)
-    try:
-        for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
-        return 0
+    if os.name == "posix":  # pragma: no cover - platform-specific
+        try:
+            for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            return 0
     return 0
 
 
@@ -279,20 +280,29 @@ def _process_group_memory_bytes(process_group_id: int) -> int:
             _resident_working_set_bytes(process_id)
             for process_id in _windows_descendant_process_ids(process_group_id)
         )
-    total = 0
-    try:
-        process_directories = (path for path in Path("/proc").iterdir() if path.name.isdigit())
-        for process_directory in process_directories:
-            try:
-                stat = (process_directory / "stat").read_text()
-                fields = stat[stat.rfind(")") + 2 :].split()
-                if len(fields) > 2 and int(fields[2]) == process_group_id:
-                    total += _resident_memory_bytes(int(process_directory.name))
-            except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
-                continue
-    except (FileNotFoundError, PermissionError):
-        return 0
-    return total
+    if os.name == "posix":  # pragma: no cover - platform-specific
+        total = 0
+        try:
+            process_directories = (
+                path for path in Path("/proc").iterdir() if path.name.isdigit()
+            )
+            for process_directory in process_directories:
+                try:
+                    stat = (process_directory / "stat").read_text()
+                    fields = stat[stat.rfind(")") + 2 :].split()
+                    if len(fields) > 2 and int(fields[2]) == process_group_id:
+                        total += _resident_memory_bytes(int(process_directory.name))
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    ProcessLookupError,
+                    ValueError,
+                ):
+                    continue
+        except (FileNotFoundError, PermissionError):
+            return 0
+        return total
+    return 0
 
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
