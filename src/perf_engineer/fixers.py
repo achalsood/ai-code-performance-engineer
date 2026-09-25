@@ -142,9 +142,9 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         self.generic_visit(node)
         new_body: list[ast.stmt] = []
-        for statement in node.body:
+        for statement_index, statement in enumerate(node.body):
             if isinstance(statement, ast.For):
-                replacement = self._rewrite_loop(statement)
+                replacement = self._rewrite_loop(statement, node.body[:statement_index])
                 if replacement is not None:
                     setup, loop = replacement
                     new_body.extend((setup, loop))
@@ -154,7 +154,9 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         node.body = new_body
         return node
 
-    def _rewrite_loop(self, loop: ast.For) -> tuple[ast.Assign, ast.For] | None:
+    def _rewrite_loop(
+        self, loop: ast.For, preceding_statements: list[ast.stmt]
+    ) -> tuple[ast.Assign, ast.For] | None:
         matches = [
             compare
             for compare in ast.walk(loop)
@@ -183,6 +185,10 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
             return None
         if not all(_membership_probe_is_hash_safe(compare.left, loop) for compare in matches):
             return None
+        if not _membership_collection_is_statically_hash_safe(
+            preceding_statements, collection
+        ):
+            return None
 
         index_name = f"_perf_membership_{self.index}"
         self.index += 1
@@ -197,6 +203,36 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         rewritten_loop = _MembershipCollectionReplacer(collection, index_name).visit(loop)
         assert isinstance(rewritten_loop, ast.For)
         return setup, rewritten_loop
+
+
+def _membership_collection_is_statically_hash_safe(
+    preceding_statements: list[ast.stmt], collection: str
+) -> bool:
+    for statement in reversed(preceding_statements):
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == collection
+        ):
+            value = statement.value
+            if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+                return all(
+                    isinstance(element, ast.Constant)
+                    and isinstance(
+                        element.value,
+                        (str, bytes, int, float, complex, bool, type(None)),
+                    )
+                    for element in value.elts
+                )
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "range"
+            ):
+                return True
+            return False
+    return False
 
 
 def _membership_probe_is_hash_safe(expression: ast.expr, loop: ast.For) -> bool:
