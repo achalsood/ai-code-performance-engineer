@@ -612,3 +612,61 @@ def test_deterministic_provider_avoids_membership_index_name_collision() -> None
     assert "_perf_membership_1 = set(values)" in patch
     assert "query in _perf_membership_1" in patch
     assert "_perf_membership_0 = 'preserve-me'" in patch
+
+
+def test_deterministic_provider_refuses_membership_when_alias_mutates() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        alias = values
+        result.append(query in values)
+        alias.append(query)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                6,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_when_alias_escapes() -> None:
+    source = """def present(queries):
+    values = [1, 2, 3, 4, 5]
+    result = []
+    for query in queries:
+        alias = values
+        inspect_values(alias)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                7,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
