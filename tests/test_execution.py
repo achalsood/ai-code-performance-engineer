@@ -31,7 +31,7 @@ def test_runner_reports_per_process_memory(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "import time; data = bytearray(8_000_000); time.sleep(0.05)",
+            "import time; data = bytearray(32_000_000); time.sleep(0.15)",
         ],
         cwd=tmp_path,
         policy=ExecutionPolicy(),
