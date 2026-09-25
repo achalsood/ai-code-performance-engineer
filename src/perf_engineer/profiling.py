@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pstats
 import tempfile
 from dataclasses import asdict, dataclass
@@ -72,8 +73,10 @@ class CProfileAdapter:
     ) -> ProfileResult:
         if not command or "python" not in Path(command[0]).name.lower():
             raise ProfilingError("cProfile requires a Python command")
-        profile_path = Path(tempfile.mkstemp(suffix=".prof")[1])
-        profile_path.unlink(missing_ok=True)
+        descriptor, profile_name = tempfile.mkstemp(suffix=".prof")
+        os.close(descriptor)
+        profile_path = Path(profile_name)
+        profile_path.unlink()
         try:
             wrapped = [command[0], "-m", "cProfile", "-o", str(profile_path), *command[1:]]
             measured = self.runner.run(wrapped, cwd=cwd, policy=policy)
