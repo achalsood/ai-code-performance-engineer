@@ -41,3 +41,27 @@ def test_fix_parser_uses_local_deterministic_engine(tmp_path) -> None:
     assert args.action == "fix"
     assert args.maximum_candidates == 3
     assert args.minimum_improvement == 5.0
+
+
+def test_calibrate_parser_accepts_adaptive_measurement_options(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "calibrate",
+            "--baseline",
+            str(tmp_path / "baseline"),
+            "--candidate",
+            str(tmp_path / "candidate"),
+            "--benchmark",
+            "python benchmark.py",
+            "--rounds",
+            "5",
+            "--maximum-rounds",
+            "9",
+        ]
+    )
+    assert args.action == "calibrate"
+    assert args.rounds == 5
+    assert args.maximum_rounds == 9
+    assert args.warmups == 2
