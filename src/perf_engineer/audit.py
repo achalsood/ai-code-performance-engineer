@@ -12,9 +12,7 @@ def _lock_stream(stream: IO[str]) -> None:
     if os.name == "posix":
         import fcntl
 
-        fcntl.flock(  # type: ignore[attr-defined]
-            stream, fcntl.LOCK_EX  # type: ignore[attr-defined]
-        )
+        fcntl.flock(stream, fcntl.LOCK_EX)
 
 
 class AuditLogger:
