@@ -491,17 +491,17 @@ def _run_evaluate(args: argparse.Namespace) -> int:
 
 
 def _run_verify(args: argparse.Namespace) -> int:
-correctness = run_correctness(args.test, cwd=args.candidate)
-baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
-candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
-verification_result = compare(
-    baseline,
-    candidate,
-    correctness_passed=correctness,
-    minimum_improvement_percent=args.minimum_improvement,
-)
-print(json.dumps(verification_result.to_dict(), indent=2))
-return 0 if verification_result.decision == "accept" else 2
+    correctness = run_correctness(args.test, cwd=args.candidate)
+    baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
+    candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
+    verification_result = compare(
+        baseline,
+        candidate,
+        correctness_passed=correctness,
+        minimum_improvement_percent=args.minimum_improvement,
+    )
+    print(json.dumps(verification_result.to_dict(), indent=2))
+    return 0 if verification_result.decision == "accept" else 2
 
 
 COMMAND_HANDLERS = {
