@@ -28,10 +28,12 @@ class DeterministicFixProvider:
             rewrite = _rewrite_python(source)
             if rewrite is None or rewrite.source == source:
                 continue
+            normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
+            normalized_rewrite = rewrite.source.replace("\r\n", "\n").replace("\r", "\n")
             patch = "".join(
                 difflib.unified_diff(
-                    source.splitlines(keepends=True),
-                    rewrite.source.splitlines(keepends=True),
+                    normalized_source.splitlines(keepends=True),
+                    normalized_rewrite.splitlines(keepends=True),
                     fromfile=f"a/{path}",
                     tofile=f"b/{path}",
                 )
