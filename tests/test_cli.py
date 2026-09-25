@@ -6,3 +6,19 @@ def test_empty_analysis_returns_success(tmp_path, capsys) -> None:
     assert main(["analyze", str(tmp_path)]) == 0
     assert capsys.readouterr().out == ""
 
+
+
+def test_arena_parser_accepts_command_provider(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "arena",
+            "--corpus",
+            str(tmp_path / "corpus.json"),
+            "--provider-command",
+            "python provider.py",
+        ]
+    )
+    assert args.action == "arena"
+    assert args.maximum_candidates == 3
