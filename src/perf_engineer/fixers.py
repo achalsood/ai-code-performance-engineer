@@ -191,8 +191,14 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
             return None
 
         used_names = {
-            child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+            child.id
+            for statement in preceding_statements
+            for child in ast.walk(statement)
+            if isinstance(child, ast.Name)
         }
+        used_names.update(
+            child.id for child in ast.walk(loop) if isinstance(child, ast.Name)
+        )
         index_name = _fresh_generated_name("_perf_membership_", self.index, used_names)
         self.index = int(index_name.rsplit("_", 1)[1]) + 1
         setup = ast.Assign(
