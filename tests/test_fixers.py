@@ -211,3 +211,63 @@ def test_deterministic_provider_refuses_records_passed_to_unknown_call() -> None
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_adds_counter_import_after_future_import() -> None:
+    source = """from __future__ import annotations
+
+def frequencies(items):
+    result = []
+    for item in items:
+        result.append(items.count(item))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF003",
+                "example.py",
+                6,
+                "high",
+                ".count() performs a linear scan inside a loop.",
+                "Precompute a lookup dictionary or set.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "from __future__ import annotations" in patch
+    assert "from collections import Counter" in patch
+    assert "Counter(items)" in patch
+
+
+def test_deterministic_provider_reuses_existing_counter_import() -> None:
+    source = """from collections import Counter
+
+def frequencies(items):
+    result = []
+    for item in items:
+        result.append(items.count(item))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF003",
+                "example.py",
+                6,
+                "high",
+                ".count() performs a linear scan inside a loop.",
+                "Precompute a lookup dictionary or set.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert patch.count("from collections import Counter") == 1
