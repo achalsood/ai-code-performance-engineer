@@ -33,3 +33,18 @@ def test_markdown_report_renders_regressions() -> None:
     report = markdown_report(run, [regression])
 
     assert "- acceptance_rate: 75.0 → 50.0 (-25.0)" in report
+
+
+
+def test_markdown_report_renders_regression_list() -> None:
+    summary = EvaluationSummary(0, 0, 100.0, 50.0, 12.5, 8.0, 17.0)
+    run = EvaluationRun(1, "cross-platform", "now", (), summary)
+    regressions = [
+        Regression("acceptance_rate", 75.0, 50.0, -25.0),
+        Regression("median_speedup_percent", 20.0, 12.5, -7.5),
+    ]
+
+    report = markdown_report(run, regressions)
+
+    assert "- acceptance_rate: 75.0 → 50.0 (-25.0)" in report
+    assert "- median_speedup_percent: 20.0 → 12.5 (-7.5)" in report
