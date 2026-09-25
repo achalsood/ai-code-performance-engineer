@@ -89,3 +89,95 @@ def test_deterministic_provider_does_not_hoist_mutated_input() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_batched_nested_lookup() -> None:
+    source = """def match_records(records, queries):
+    result = []
+    for query in queries:
+        for record in records:
+            if record["id"] == query["id"]:
+                result.append(record)
+                break
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                4,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Use dictionary indexing when semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_lookup_0 = {}" in patch
+    assert "_perf_lookup_0.setdefault(record['id'], record)" in patch
+    assert "_perf_lookup_0.get(query['id'])" in patch
+
+
+def test_deterministic_provider_preserves_first_duplicate_match() -> None:
+    source = """def match_records(records, queries):
+    result = []
+    for query in queries:
+        for record in records:
+            if record["id"] == query["id"]:
+                result.append(record)
+                break
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                4,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Use dictionary indexing when semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    patch = DeterministicFixProvider().generate(request)[0].patch
+    assert "setdefault" in patch
+
+
+def test_deterministic_provider_refuses_nested_loop_without_break() -> None:
+    source = """def match_records(records, queries):
+    result = []
+    for query in queries:
+        for record in records:
+            if record["id"] == query["id"]:
+                result.append(record)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "example.py",
+                4,
+                "medium",
+                "Nested loop may scale quadratically.",
+                "Use dictionary indexing when semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
