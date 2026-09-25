@@ -175,26 +175,13 @@ class _LinearCountTransformer(ast.NodeTransformer):
             return None
         index_name = f"_perf_counts_{self.counter_index}"
         self.counter_index += 1
-        setup = ast.Try(
-            body=[
-                ast.Assign(
-                    targets=[ast.Name(id=index_name, ctx=ast.Store())],
-                    value=ast.Call(
-                        func=ast.Name(id="Counter", ctx=ast.Load()),
-                        args=[ast.Name(id=collection, ctx=ast.Load())],
-                        keywords=[],
-                    ),
-                )
-            ],
-            handlers=[
-                ast.ExceptHandler(
-                    type=ast.Name(id="TypeError", ctx=ast.Load()),
-                    name=None,
-                    body=[loop],
-                )
-            ],
-            orelse=[],
-            finalbody=[],
+        setup = ast.Assign(
+            targets=[ast.Name(id=index_name, ctx=ast.Store())],
+            value=ast.Call(
+                func=ast.Name(id="Counter", ctx=ast.Load()),
+                args=[ast.Name(id=collection, ctx=ast.Load())],
+                keywords=[],
+            ),
         )
         replacer = _CountCallReplacer(collection, index_name)
         rewritten_loop = replacer.visit(loop)
