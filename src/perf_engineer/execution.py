@@ -188,7 +188,7 @@ class LocalProcessRunner:
 
             def monitor() -> None:
                 nonlocal monitoring_peak, violation
-                while not stopped.wait(0.01):
+                while not stopped.wait(0.002):
                     observed = _process_group_memory_bytes(process.pid)
                     monitoring_peak = max(monitoring_peak, observed)
                     if monitoring_peak > policy.memory_bytes:
