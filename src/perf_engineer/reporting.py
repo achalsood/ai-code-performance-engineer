@@ -32,13 +32,15 @@ def markdown_report(run: EvaluationRun, regressions: list[Regression]) -> str:
             f"{category.correctness_rate:.1f}% | {category.acceptance_rate:.1f}% | "
             f"{category.median_speedup_percent:.1f}% |"
         )
-    lines.extend([
+    lines.extend(
+        [
         "",
         "## Cases",
         "",
         "| Case | Decision | Speedup | 95% CI | Correct |",
         "|---|---|---:|---:|---:|",
-    ])
+        ]
+    )
     for result in run.results:
         verification = result.verification
         lines.append(
