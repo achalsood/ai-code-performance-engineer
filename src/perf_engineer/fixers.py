@@ -225,10 +225,21 @@ def _membership_collection_is_statically_hash_safe(
                     )
                     for element in value.elts
                 )
-            return (
+            if (
                 isinstance(value, ast.Call)
                 and isinstance(value.func, ast.Name)
                 and value.func.id == "range"
+            ):
+                return True
+            return (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id in {"list", "tuple", "set"}
+                and len(value.args) == 1
+                and isinstance(value.args[0], ast.Call)
+                and isinstance(value.args[0].func, ast.Name)
+                and value.args[0].func.id == "range"
+                and not value.keywords
             )
     return False
 
