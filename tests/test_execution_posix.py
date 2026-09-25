@@ -36,3 +36,7 @@ def test_posix_resident_memory_reads_current_process() -> None:
 
 def test_posix_process_group_memory_reads_current_group() -> None:
     assert _process_group_memory_bytes(os.getpgrp()) > 0
+
+
+def test_posix_resident_memory_returns_zero_for_missing_process() -> None:
+    assert _resident_memory_bytes(999_999_999) == 0
