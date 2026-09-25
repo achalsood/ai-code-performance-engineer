@@ -157,58 +157,6 @@ def _resident_memory_bytes(process_id: int) -> int:
     return 0
 
 
-def _windows_memory_counters(process_id: int) -> dict[str, int]:
-    """Return raw Win32 process memory counters for diagnostics."""
-    if os.name != "nt":
-        return {}
-    import ctypes
-    from ctypes import wintypes
-
-    class ProcessMemoryCounters(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("PageFaultCount", wintypes.DWORD),
-            ("PeakWorkingSetSize", ctypes.c_ulonglong),
-            ("WorkingSetSize", ctypes.c_ulonglong),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
-            ("PagefileUsage", ctypes.c_ulonglong),
-            ("PeakPagefileUsage", ctypes.c_ulonglong),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    psapi = ctypes.WinDLL("psapi", use_last_error=True)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    psapi.GetProcessMemoryInfo.argtypes = [
-        wintypes.HANDLE,
-        ctypes.POINTER(ProcessMemoryCounters),
-        wintypes.DWORD,
-    ]
-    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-    # PROCESS_QUERY_INFORMATION is required by GetProcessMemoryInfo on
-    # supported Windows versions. PROCESS_VM_READ is not needed here.
-    handle = kernel32.OpenProcess(0x0400, False, process_id)
-    if not handle:
-        return {"error": ctypes.get_last_error()}
-    try:
-        counters = ProcessMemoryCounters()
-        counters.cb = ctypes.sizeof(counters)
-        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
-            return {"error": ctypes.get_last_error()}
-        return {
-            "PeakWorkingSetSize": int(counters.PeakWorkingSetSize),
-            "WorkingSetSize": int(counters.WorkingSetSize),
-            "PagefileUsage": int(counters.PagefileUsage),
-            "PeakPagefileUsage": int(counters.PeakPagefileUsage),
-        }
-    finally:
-        kernel32.CloseHandle(handle)
-
-
 def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
     """Return the live Windows process tree rooted at *root_process_id*."""
     import ctypes
