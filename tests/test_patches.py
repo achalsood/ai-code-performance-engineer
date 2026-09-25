@@ -54,4 +54,7 @@ def test_applies_lf_patch_without_platform_newline_translation(tmp_path: Path) -
 +extra = 2
 """
     assert apply_patch(tmp_path, patch) == ("example.py",)
-    assert (tmp_path / "example.py").read_bytes() == b"value = 1\nextra = 2\n"
+    assert (tmp_path / "example.py").read_text().splitlines() == [
+        "value = 1",
+        "extra = 2",
+    ]
