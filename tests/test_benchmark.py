@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from perf_engineer.benchmark import run_adaptive_paired_benchmarks
 from perf_engineer.execution import ExecutionPolicy, ExecutionResult
 
@@ -47,7 +49,7 @@ def test_adaptive_benchmark_repeats_short_commands(tmp_path: Path) -> None:
     assert before.calibration_probe_seconds == 0.02
     assert before.repetitions_per_sample == 5
     assert before.measurement_rounds == 3
-    assert before.total_measurement_seconds == 0.45
+    assert before.total_measurement_seconds == pytest.approx(0.45)
     assert after.repetitions_per_sample == 5
     assert after.measurement_rounds == 3
 
