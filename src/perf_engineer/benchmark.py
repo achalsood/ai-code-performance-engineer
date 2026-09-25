@@ -121,6 +121,26 @@ def run_paired_benchmarks(
     )
 
 
+
+
+def _bootstrap_median_interval(
+    values: list[float], *, resamples: int = 1000, seed: int = 42
+) -> tuple[float, float]:
+    """Return a deterministic bootstrap interval for a sample median."""
+    if not values:
+        return 0.0, 0.0
+    import random
+
+    generator = random.Random(seed)
+    estimates = [
+        statistics.median(generator.choices(values, k=len(values))) for _ in range(resamples)
+    ]
+    estimates.sort()
+    return (
+        estimates[int(0.025 * (resamples - 1))],
+        estimates[int(0.975 * (resamples - 1))],
+    )
+
 def run_adaptive_paired_benchmarks(
     command: list[str],
     *,
@@ -197,7 +217,11 @@ def run_adaptive_paired_benchmarks(
             ]
             center = statistics.median(effects)
             mad = statistics.median(abs(effect - center) for effect in effects)
-            if mad <= target_mad_percent:
+            confidence_low, _ = _bootstrap_median_interval(effects)
+            # Stability alone is not enough to stop sampling when the result is
+            # still statistically ambiguous. Keep collecting paired evidence
+            # while the robust interval straddles a practically relevant gain.
+            if mad <= target_mad_percent and confidence_low > 0.0:
                 break
 
     return (
