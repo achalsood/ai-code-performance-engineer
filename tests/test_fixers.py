@@ -414,3 +414,87 @@ def test_deterministic_provider_refuses_count_when_collection_escapes() -> None:
         maximum_candidates=3,
     )
     assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_indexes_repeated_membership() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    candidates = DeterministicFixProvider().generate(request)
+    assert len(candidates) == 1
+    patch = candidates[0].patch
+    assert "_perf_membership_0 = set(values)" in patch
+    assert "query in _perf_membership_0" in patch
+
+
+def test_deterministic_provider_refuses_membership_when_collection_mutates() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        result.append(query in values)
+        values.append(query)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                4,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
+
+
+def test_deterministic_provider_refuses_membership_when_collection_escapes() -> None:
+    source = """def present(values, queries):
+    result = []
+    for query in queries:
+        inspect_values(values)
+        result.append(query in values)
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004",
+                "example.py",
+                5,
+                "high",
+                "Linear membership lookup executes inside a loop.",
+                "Precompute a set outside the loop when hash semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+    assert DeterministicFixProvider().generate(request) == []
