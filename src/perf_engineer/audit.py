@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, IO
+
+
+def _lock_stream(stream: IO[str]) -> None:
+    if os.name == "posix":
+        import fcntl
+
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        return
+    import msvcrt
+
+    stream.seek(0)
+    msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
 
 
 class AuditLogger:
@@ -18,7 +29,7 @@ class AuditLogger:
     def append(self, event: str, data: dict[str, Any]) -> str:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a+", encoding="utf-8") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
+            _lock_stream(stream)
             previous_hash = self._last_hash(stream)
             body = {
                 "timestamp": datetime.now(UTC).isoformat(),
