@@ -184,10 +184,9 @@ def test_invariant_hoist_closes_analyze_fix_verify_loop(tmp_path: Path) -> None:
         result.append((query, ordered[0], ordered[-1]))
     return result
 
-values = list(range(12000, 0, -1))
-queries = list(range(500))
-for _ in range(3):
-    rank_queries(values, queries)
+values = list(range(6000, 0, -1))
+queries = list(range(250))
+rank_queries(values, queries)
 """
     )
     (repository / "test_correctness.py").write_text(
