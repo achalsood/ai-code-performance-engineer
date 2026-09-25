@@ -18,7 +18,14 @@ class BenchmarkError(RuntimeError):
 
 
 def _summarize(
-    command: list[str], samples: list[float], cpu_samples: list[float], peak_memory_bytes: int
+    command: list[str],
+    samples: list[float],
+    cpu_samples: list[float],
+    peak_memory_bytes: int,
+    *,
+    calibration_probe_seconds: float | None = None,
+    repetitions_per_sample: int = 1,
+    total_measurement_seconds: float | None = None,
 ) -> BenchmarkResult:
     return BenchmarkResult(
         command=tuple(command),
@@ -30,6 +37,10 @@ def _summarize(
         max_seconds=max(samples),
         cpu_mean_seconds=statistics.fmean(cpu_samples),
         peak_memory_bytes=peak_memory_bytes,
+        calibration_probe_seconds=calibration_probe_seconds,
+        repetitions_per_sample=repetitions_per_sample,
+        measurement_rounds=len(samples),
+        total_measurement_seconds=total_measurement_seconds,
     )
 
 
@@ -190,6 +201,22 @@ def run_adaptive_paired_benchmarks(
                 break
 
     return (
-        _summarize(command, samples["baseline"], cpu["baseline"], memory["baseline"]),
-        _summarize(command, samples["candidate"], cpu["candidate"], memory["candidate"]),
+        _summarize(
+            command,
+            samples["baseline"],
+            cpu["baseline"],
+            memory["baseline"],
+            calibration_probe_seconds=probe.wall_seconds,
+            repetitions_per_sample=repetitions,
+            total_measurement_seconds=measured_seconds,
+        ),
+        _summarize(
+            command,
+            samples["candidate"],
+            cpu["candidate"],
+            memory["candidate"],
+            calibration_probe_seconds=probe.wall_seconds,
+            repetitions_per_sample=repetitions,
+            total_measurement_seconds=measured_seconds,
+        ),
     )
