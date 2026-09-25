@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -14,7 +13,7 @@ from .evaluation import CorpusCase, load_corpus
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import Decision
 from .patches import PatchValidationError, apply_patch
-from .providers import CandidateProvider, OptimizationRequest
+from .providers import CandidateProvider, OptimizationRequest, ProviderError
 from .verification import compare, run_correctness
 
 
@@ -45,7 +44,13 @@ class AgentArenaRun:
 def _request(case: CorpusCase, baseline: Path, maximum_candidates: int) -> OptimizationRequest:
     files: dict[str, str] = {}
     for path in sorted(baseline.rglob("*")):
-        if path.is_file() and path.name not in {"workload.py", "workload.js", "test_correctness.py", "test_correctness.js"}:
+        hidden_names = {
+            "workload.py",
+            "workload.js",
+            "test_correctness.py",
+            "test_correctness.js",
+        }
+        if path.is_file() and path.name not in hidden_names:
             files[path.relative_to(baseline).as_posix()] = path.read_text(encoding="utf-8")
     return OptimizationRequest(
         objective=(
@@ -81,8 +86,19 @@ def run_agent_arena(
         request = _request(case, baseline, maximum_candidates)
         try:
             candidates = provider.generate(request)
-        except Exception as exc:
-            results.append(AgentCaseResult(case.case_id, case.category, case.language, "provider-failure", None, None, None, str(exc)))
+        except ProviderError as exc:
+            results.append(
+                AgentCaseResult(
+                    case.case_id,
+                    case.category,
+                    case.language,
+                    "provider-failure",
+                    None,
+                    None,
+                    None,
+                    str(exc),
+                )
+            )
             continue
         best: AgentCaseResult | None = None
         for candidate in candidates:
@@ -91,9 +107,23 @@ def run_agent_arena(
                     candidate_dir = Path(directory) / "candidate"
                     shutil.copytree(baseline, candidate_dir)
                     apply_patch(candidate_dir, candidate.patch)
-                    correct = run_correctness(list(case.test_command), cwd=candidate_dir, runner=selected_runner, policy=selected_policy)
+                    correct = run_correctness(
+                        list(case.test_command),
+                        cwd=candidate_dir,
+                        runner=selected_runner,
+                        policy=selected_policy,
+                    )
                     if not correct:
-                        result = AgentCaseResult(case.case_id, case.category, case.language, "correctness-failure", candidate.candidate_id, None, None, None)
+                        result = AgentCaseResult(
+                            case.case_id,
+                            case.category,
+                            case.language,
+                            "correctness-failure",
+                            candidate.candidate_id,
+                            None,
+                            None,
+                            None,
+                        )
                     else:
                         base_measure, candidate_measure = run_adaptive_paired_benchmarks(
                             list(case.benchmark_command),
@@ -118,7 +148,16 @@ def run_agent_arena(
                             verification.speedup_ci95_low, None,
                         )
             except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
-                result = AgentCaseResult(case.case_id, case.category, case.language, "invalid", candidate.candidate_id, None, None, str(exc))
+                result = AgentCaseResult(
+                    case.case_id,
+                    case.category,
+                    case.language,
+                    "invalid",
+                    candidate.candidate_id,
+                    None,
+                    None,
+                    str(exc),
+                )
             if best is None or (
                 result.status == "accepted",
                 result.speedup_ci95_low or float("-inf"),
@@ -127,8 +166,26 @@ def run_agent_arena(
                 best.speedup_ci95_low or float("-inf"),
             ):
                 best = result
-        results.append(best or AgentCaseResult(case.case_id, case.category, case.language, "provider-failure", None, None, None, "provider returned no candidates"))
-    return AgentArenaRun(1, suite_name, provider_label, datetime.now(UTC).isoformat(), tuple(results))
+        results.append(
+            best
+            or AgentCaseResult(
+                case.case_id,
+                case.category,
+                case.language,
+                "provider-failure",
+                None,
+                None,
+                None,
+                "provider returned no candidates",
+            )
+        )
+    return AgentArenaRun(
+        1,
+        suite_name,
+        provider_label,
+        datetime.now(UTC).isoformat(),
+        tuple(results),
+    )
 
 
 def save_agent_arena(run: AgentArenaRun, destination: Path) -> Path:
