@@ -12,7 +12,9 @@ def case_result(speedup: float, decision: Decision = Decision.ACCEPT) -> CaseRes
     verification = VerificationResult(
         decision, speedup, True, True, "measured", baseline, candidate
     )
-    case = CorpusCase("case", "description", "before", "after", ("work",), ("test",))
+    case = CorpusCase(
+        "case", "description", "before", "after", ("work",), ("test",), category="algorithms", language="python"
+    )
     return CaseResult(case, verification)
 
 
@@ -25,3 +27,13 @@ def test_summarizes_effectiveness() -> None:
     assert summary.acceptance_rate == 50.0
     assert summary.correctness_rate == 100.0
     assert summary.median_speedup_percent == 15.0
+
+
+def test_summarizes_categories() -> None:
+    summary = summarize([case_result(20.0), case_result(10.0, Decision.REJECT)])
+    assert len(summary.categories) == 1
+    category = summary.categories[0]
+    assert category.category == "algorithms"
+    assert category.total_cases == 2
+    assert category.acceptance_rate == 50.0
+    assert category.median_speedup_percent == 15.0
