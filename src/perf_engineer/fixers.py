@@ -58,15 +58,26 @@ def _rewrite_python(source: str) -> _Rewrite | None:
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    transformer = _LinearCountTransformer()
-    rewritten = transformer.visit(tree)
-    if not transformer.changed:
+    count_transformer = _LinearCountTransformer()
+    rewritten = count_transformer.visit(tree)
+    if count_transformer.changed:
+        ast.fix_missing_locations(rewritten)
+        return _Rewrite(
+            "Precompute repeated counts",
+            "Replaces repeated list.count calls in a loop with one frequency table.",
+            "data-structure-index",
+            ast.unparse(rewritten) + "\n",
+        )
+
+    hoist_transformer = _InvariantAllocationTransformer()
+    rewritten = hoist_transformer.visit(tree)
+    if not hoist_transformer.changed:
         return None
     ast.fix_missing_locations(rewritten)
     return _Rewrite(
-        "Precompute repeated counts",
-        "Replaces repeated list.count calls in a loop with one frequency table.",
-        "data-structure-index",
+        "Hoist invariant loop work",
+        "Moves an invariant sorted() or list() allocation outside a loop.",
+        "hoist-invariant-work",
         ast.unparse(rewritten) + "\n",
     )
 
@@ -184,3 +195,103 @@ class _CountCallReplacer(ast.NodeTransformer):
                 node,
             )
         return node
+
+
+class _InvariantAllocationTransformer(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self.changed = False
+        self.hoist_index = 0
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        self.generic_visit(node)
+        new_body: list[ast.stmt] = []
+        for statement in node.body:
+            if isinstance(statement, ast.For):
+                replacement = self._rewrite_loop(statement)
+                if replacement is not None:
+                    setup, loop = replacement
+                    new_body.extend((setup, loop))
+                    self.changed = True
+                    continue
+            new_body.append(statement)
+        node.body = new_body
+        return node
+
+    def _rewrite_loop(self, loop: ast.For) -> tuple[ast.Assign, ast.For] | None:
+        calls = [
+            call
+            for call in ast.walk(loop)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in {"sorted", "list"}
+            and len(call.args) == 1
+            and not call.keywords
+            and isinstance(call.args[0], ast.Name)
+        ]
+        if len(calls) != 1:
+            return None
+        call = calls[0]
+        source_name = call.args[0].id
+        loop_names = {
+            child.id
+            for child in ast.walk(loop.target)
+            if isinstance(child, ast.Name)
+        }
+        if source_name in loop_names or _name_is_mutated(loop, source_name):
+            return None
+
+        hoisted_name = f"_perf_invariant_{self.hoist_index}"
+        self.hoist_index += 1
+        setup = ast.Assign(
+            targets=[ast.Name(id=hoisted_name, ctx=ast.Store())],
+            value=call,
+        )
+        replacement = ast.copy_location(
+            ast.Name(id=hoisted_name, ctx=ast.Load()),
+            call,
+        )
+        rewritten_loop = _SpecificCallReplacer(call, replacement).visit(loop)
+        assert isinstance(rewritten_loop, ast.For)
+        return setup, rewritten_loop
+
+
+class _SpecificCallReplacer(ast.NodeTransformer):
+    def __init__(self, target: ast.Call, replacement: ast.expr) -> None:
+        self.target = target
+        self.replacement = replacement
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        if node is self.target:
+            return self.replacement
+        return self.generic_visit(node)
+
+
+def _name_is_mutated(loop: ast.For, name: str) -> bool:
+    mutating_methods = {
+        "append",
+        "clear",
+        "extend",
+        "insert",
+        "pop",
+        "remove",
+        "reverse",
+        "sort",
+    }
+    for node in ast.walk(loop):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(
+                isinstance(child, ast.Name) and child.id == name
+                for target in targets
+                for child in ast.walk(target)
+            ):
+                return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == name
+            and node.func.attr in mutating_methods
+        ):
+            return True
+    return False
