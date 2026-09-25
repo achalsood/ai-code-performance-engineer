@@ -5,7 +5,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, IO
+from typing import IO, Any
 
 
 def _lock_stream(stream: IO[str]) -> None:
