@@ -5,14 +5,15 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, cast
 
 
 def _lock_stream(stream: IO[str]) -> None:
     if os.name == "posix":
         import fcntl
 
-        fcntl.flock(stream, fcntl.LOCK_EX)
+        fcntl_api = cast(Any, fcntl)
+        fcntl_api.flock(stream, fcntl_api.LOCK_EX)
 
 
 class AuditLogger:
