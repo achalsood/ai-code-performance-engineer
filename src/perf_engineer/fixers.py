@@ -322,7 +322,11 @@ class _NestedEqualityLookupTransformer(ast.NodeTransformer):
         self.generic_visit(node)
         new_body: list[ast.stmt] = []
         for statement in node.body:
-            replacement = self._rewrite_outer_loop(statement) if isinstance(statement, ast.For) else None
+            replacement = (
+                self._rewrite_outer_loop(statement)
+                if isinstance(statement, ast.For)
+                else None
+            )
             if replacement is None:
                 new_body.append(statement)
                 continue
