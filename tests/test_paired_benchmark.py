@@ -30,5 +30,6 @@ def test_adaptive_pairing_stops_after_stable_minimum(tmp_path: Path) -> None:
         maximum_rounds=8,
         warmups=0,
         target_mad_percent=100.0,
+        minimum_measurement_seconds=0.0,
     )
     assert len(before.samples_seconds) == len(after.samples_seconds) == 3
