@@ -148,6 +148,56 @@ def _resident_memory_bytes(process_id: int) -> int:
     return 0
 
 
+def _windows_memory_counters(process_id: int) -> dict[str, int]:
+    """Return raw Win32 process memory counters for diagnostics."""
+    if os.name != "nt":
+        return {}
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ProcessMemoryCounters),
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000 | 0x0010, False, process_id)
+    if not handle:
+        return {"error": ctypes.get_last_error()}
+    try:
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return {"error": ctypes.get_last_error()}
+        return {
+            "PeakWorkingSetSize": int(counters.PeakWorkingSetSize),
+            "WorkingSetSize": int(counters.WorkingSetSize),
+            "PagefileUsage": int(counters.PagefileUsage),
+            "PeakPagefileUsage": int(counters.PeakPagefileUsage),
+        }
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _process_group_memory_bytes(process_group_id: int) -> int:
     if os.name == "nt":
         return _resident_memory_bytes(process_group_id)
