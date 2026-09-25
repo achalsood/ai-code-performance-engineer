@@ -44,6 +44,12 @@ def test_adaptive_benchmark_repeats_short_commands(tmp_path: Path) -> None:
     assert runner.calls["candidate"] == 15
     assert before.median_seconds == 0.1
     assert after.median_seconds == 0.05
+    assert before.calibration_probe_seconds == 0.02
+    assert before.repetitions_per_sample == 5
+    assert before.measurement_rounds == 3
+    assert before.total_measurement_seconds == 0.45
+    assert after.repetitions_per_sample == 5
+    assert after.measurement_rounds == 3
 
 
 def test_adaptive_benchmark_keeps_long_commands_single_shot(tmp_path: Path) -> None:
@@ -53,7 +59,7 @@ def test_adaptive_benchmark_keeps_long_commands_single_shot(tmp_path: Path) -> N
     candidate.mkdir()
     runner = SequenceRunner(0.2, 0.15)
 
-    run_adaptive_paired_benchmarks(
+    before, after = run_adaptive_paired_benchmarks(
         ["work"],
         baseline_cwd=baseline,
         candidate_cwd=candidate,
@@ -67,3 +73,7 @@ def test_adaptive_benchmark_keeps_long_commands_single_shot(tmp_path: Path) -> N
 
     assert runner.calls["baseline"] == 4
     assert runner.calls["candidate"] == 3
+    assert before.calibration_probe_seconds == 0.2
+    assert before.repetitions_per_sample == 1
+    assert before.measurement_rounds == 3
+    assert after.repetitions_per_sample == 1
