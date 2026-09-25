@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 from perf_engineer.cli import main
@@ -274,6 +275,7 @@ def test_experiment_command_saves_record_and_returns_accept(tmp_path, monkeypatc
 
 def test_verify_command_returns_rejection_status(tmp_path, monkeypatch, capsys) -> None:
     from types import SimpleNamespace
+
     from perf_engineer.models import BenchmarkResult
 
     measured = BenchmarkResult(("python",), (1.0,) * 3, 1.0, 1.0, 0.0, 1.0, 1.0)
