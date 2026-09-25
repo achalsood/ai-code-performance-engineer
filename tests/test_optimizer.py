@@ -83,7 +83,7 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
         ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
     )
     subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
-    (repository / "workload.py").write_text("import time\ntime.sleep(0.10)\n")
+    (repository / "workload.py").write_text("import time\ntime.sleep(0.20)\n")
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
     provider = RefiningProvider()
@@ -94,8 +94,8 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
         provider=provider,
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
-        rounds=3,
-        maximum_rounds=3,
+        rounds=5,
+        maximum_rounds=7,
         profile_guidance=False,
     )
 
