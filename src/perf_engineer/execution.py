@@ -61,7 +61,7 @@ def sanitized_environment() -> dict[str, str]:
 
 
 def _apply_limits(policy: ExecutionPolicy) -> None:
-    import resource
+    import resource  # type: ignore[import-not-found]
 
     resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_NPROC, (policy.maximum_processes, policy.maximum_processes))
@@ -82,7 +82,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
         import signal
 
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signal.SIGKILL)  # type: ignore[attr-defined]
         return
     with contextlib.suppress(ProcessLookupError):
         process.kill()
@@ -152,7 +152,7 @@ class LocalProcessRunner:
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
             if os.name == "posix":
-                _, status, child_usage = os.wait4(process.pid, 0)
+                _, status, child_usage = os.wait4(process.pid, 0)  # type: ignore[attr-defined]
                 process.returncode = os.waitstatus_to_exitcode(status)
                 cpu_seconds = child_usage.ru_utime + child_usage.ru_stime
                 peak_memory_bytes = max(
