@@ -44,6 +44,8 @@ addopts = "-q -m 'not performance'"
 testpaths = ["tests"]
 markers = [
   "performance: hardware-sensitive empirical performance verification tests",
+  "windows: tests that exercise Windows-specific behavior",
+  "posix: tests that exercise POSIX-specific behavior",
 ]
 
 [tool.ruff]
