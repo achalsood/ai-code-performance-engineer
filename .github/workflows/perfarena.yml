@@ -1,0 +1,71 @@
+name: PerfArena Experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: OpenAI model ID to evaluate
+        required: true
+        type: string
+      rounds:
+        description: Minimum paired benchmark rounds
+        required: true
+        default: "7"
+        type: string
+      maximum_rounds:
+        description: Maximum paired benchmark rounds
+        required: true
+        default: "21"
+        type: string
+      maximum_candidates:
+        description: Maximum optimization candidates per challenge
+        required: true
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  perfarena:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python -m pip install -e '.[dev]'
+      - name: Require provider secret
+        shell: bash
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Repository secret OPENAI_API_KEY is required."
+            exit 1
+          fi
+      - name: Run blind PerfArena experiment
+        run: |
+          mkdir -p artifacts
+          perf-engineer arena \
+            --corpus benchmarks/corpus.json \
+            --provider openai \
+            --model "${{ inputs.model }}" \
+            --provider-label "openai:${{ inputs.model }}" \
+            --rounds "${{ inputs.rounds }}" \
+            --maximum-rounds "${{ inputs.maximum_rounds }}" \
+            --maximum-candidates "${{ inputs.maximum_candidates }}" \
+            --output artifacts/perfarena-agent.json
+      - name: Upload experiment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perfarena-${{ inputs.model }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 90

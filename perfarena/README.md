@@ -31,7 +31,7 @@ Aggregate reports include correctness rate, acceptance rate, median speedup, and
 
 ## Current state
 
-The repository already contains a three-case seed corpus. PerfArena will grow this into a larger, categorized benchmark and add submission/result artifacts suitable for comparing optimization agents.
+The repository contains a 20-case categorized benchmark plus a blind agent runner for comparing optimization systems.
 
 ## Planned challenge categories
 
@@ -47,7 +47,7 @@ The repository already contains a three-case seed corpus. PerfArena will grow th
 
 The first milestone is a 20-case public suite. The launch target is 100 reviewed challenges.
 
-## Run the seed suite
+## Run the benchmark suite
 
 ```bash
 python -m pip install -e '.[dev]'
@@ -59,3 +59,10 @@ perf-engineer evaluate \
 ```
 
 PerfArena does not claim an optimizer is good because it produced a patch. It asks whether the patch stayed correct and survived measurement.
+
+
+## Run a blind AI experiment in GitHub Actions
+
+The `PerfArena Experiment` workflow is manually triggered so model calls never run on ordinary pushes or pull requests. Add an `OPENAI_API_KEY` repository secret, choose the model ID when dispatching the workflow, and GitHub Actions will run the full blind corpus.
+
+The workflow uploads `perfarena-agent.json` as a 90-day artifact. The artifact contains the per-case verdicts and aggregate scorecard while the API key remains available only through the GitHub Actions secret environment.
