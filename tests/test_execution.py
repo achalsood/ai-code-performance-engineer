@@ -36,4 +36,4 @@ def test_runner_reports_per_process_memory(tmp_path: Path) -> None:
         cwd=tmp_path,
         policy=ExecutionPolicy(),
     )
-    assert result.peak_memory_bytes >= 8_000_000
+    assert result.peak_memory_bytes >= 16_000_000
