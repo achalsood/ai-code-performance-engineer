@@ -184,6 +184,35 @@ def test_deterministic_provider_refuses_mutated_invariant_result() -> None:
 
     assert DeterministicFixProvider().generate(request) == []
 
+
+def test_deterministic_provider_refuses_invariant_source_passed_to_unknown_call() -> None:
+    source = """def ranks(values, queries):
+    result = []
+    for query in queries:
+        ordered = sorted(values)
+        inspect_values(values)
+        result.append((query, ordered[0]))
+    return result
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF002",
+                "example.py",
+                4,
+                "medium",
+                "sorted() allocates inside a loop.",
+                "Hoist invariant allocation outside the loop when semantics permit.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=3,
+    )
+
+    assert DeterministicFixProvider().generate(request) == []
+
 def test_deterministic_provider_refuses_nested_loop_without_break() -> None:
     source = """def match_records(records, queries):
     result = []
