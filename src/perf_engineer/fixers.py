@@ -260,7 +260,9 @@ def _membership_collection_is_statically_hash_safe(
 
 def _membership_probe_is_hash_safe(expression: ast.expr, loop: ast.For) -> bool:
     if isinstance(expression, ast.Constant):
-        return isinstance(expression.value, (str, bytes, int, float, complex, bool, type(None)))
+        return isinstance(
+            expression.value, (str, bytes, int, float, complex, bool, type(None))
+        )
     if not isinstance(expression, ast.Name):
         return False
     loop_names = {
