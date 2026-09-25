@@ -259,9 +259,9 @@ class _InvariantAllocationTransformer(ast.NodeTransformer):
         }
         if source_name in loop_names or _name_is_mutated(loop, source_name):
             return None
-        if _name_is_passed_to_unknown_call(loop, source_name):
-            return None
         if not _call_is_direct_assignment_value(loop, call):
+            return None
+        if _name_is_passed_to_unknown_call(loop, source_name, ignored_call=call):
             return None
 
         hoisted_name = f"_perf_invariant_{self.hoist_index}"
@@ -300,10 +300,14 @@ class _SpecificCallReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-def _name_is_passed_to_unknown_call(loop: ast.For, name: str) -> bool:
+def _name_is_passed_to_unknown_call(
+    loop: ast.For, name: str, ignored_call: ast.Call | None = None
+) -> bool:
     safe_methods = {"append", "get", "setdefault"}
     for node in ast.walk(loop):
         if not isinstance(node, ast.Call):
+            continue
+        if node is ignored_call:
             continue
         if (
             isinstance(node.func, ast.Attribute)
