@@ -181,7 +181,7 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
             return None
         if _name_is_passed_to_unknown_call(loop, collection):
             return None
-        if not all(_membership_probe_is_hash_safe(compare.left) for compare in matches):
+        if not all(_membership_probe_is_hash_safe(compare.left, loop) for compare in matches):
             return None
 
         index_name = f"_perf_membership_{self.index}"
@@ -199,8 +199,36 @@ class _MembershipIndexTransformer(ast.NodeTransformer):
         return setup, rewritten_loop
 
 
-def _membership_probe_is_hash_safe(expression: ast.expr) -> bool:
-    return isinstance(expression, (ast.Name, ast.Constant))
+def _membership_probe_is_hash_safe(expression: ast.expr, loop: ast.For) -> bool:
+    if isinstance(expression, ast.Constant):
+        return isinstance(expression.value, (str, bytes, int, float, complex, bool, type(None)))
+    if not isinstance(expression, ast.Name):
+        return False
+    loop_names = {
+        child.id for child in ast.walk(loop.target) if isinstance(child, ast.Name)
+    }
+    if expression.id not in loop_names:
+        return False
+    return _loop_iterable_is_statically_hash_safe(loop.iter)
+
+
+def _loop_iterable_is_statically_hash_safe(iterable: ast.expr) -> bool:
+    if isinstance(iterable, (ast.List, ast.Tuple, ast.Set)):
+        return all(
+            isinstance(element, ast.Constant)
+            and isinstance(
+                element.value,
+                (str, bytes, int, float, complex, bool, type(None)),
+            )
+            for element in iterable.elts
+        )
+    if (
+        isinstance(iterable, ast.Call)
+        and isinstance(iterable.func, ast.Name)
+        and iterable.func.id == "range"
+    ):
+        return True
+    return isinstance(iterable, ast.Name)
 
 
 class _MembershipCollectionReplacer(ast.NodeTransformer):
