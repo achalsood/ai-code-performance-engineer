@@ -117,7 +117,7 @@ class OptimizationRun:
     winner_id: str | None
     environment: dict[str, str | int | None] | None = None
     baseline_profile: ProfileResult | None = None
-    provider_attempts: int = 1
+    provider_attempts: int = 0
     stages: tuple[OptimizationStage, ...] = ()
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
