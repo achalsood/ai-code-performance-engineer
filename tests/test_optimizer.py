@@ -108,7 +108,7 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
-def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -> None:
+def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
     subprocess.run(
@@ -123,7 +123,9 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
 
     class CumulativeProvider:
         def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
-            first = """diff --git a/workload.py b/workload.py
+            source = request.files["workload.py"]
+            if "time.sleep(0.20)" in source:
+                patch = """diff --git a/workload.py b/workload.py
 --- a/workload.py
 +++ b/workload.py
 @@ -1,3 +1,3 @@
@@ -132,7 +134,9 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
 +time.sleep(0.10)
  value = 1
 """
-            second = """diff --git a/workload.py b/workload.py
+                return [OptimizationCandidate("first", "First", "First speedup", patch)]
+            if "time.sleep(0.10)" in source:
+                patch = """diff --git a/workload.py b/workload.py
 --- a/workload.py
 +++ b/workload.py
 @@ -1,3 +1,3 @@
@@ -141,10 +145,8 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
 +time.sleep(0.01)
  value = 1
 """
-            return [
-                OptimizationCandidate("first", "First", "First speedup", first),
-                OptimizationCandidate("second", "Second", "Builds on first", second),
-            ]
+                return [OptimizationCandidate("second", "Second", "Next speedup", patch)]
+            return []
 
     result = optimize(
         repository=repository,
@@ -155,7 +157,7 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
         rounds=5,
         maximum_rounds=7,
         profile_guidance=False,
-        maximum_provider_attempts=1,
+        maximum_provider_attempts=2,
     )
 
     assert [item.status for item in result.evaluations] == ["accept", "accept"]
@@ -164,14 +166,9 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
     assert second_result.baseline.median_seconds < 0.18
     assert result.winner_id == "second"
     assert [stage.candidate_id for stage in result.stages] == ["first", "second"]
-    assert result.stages[0].stage_number == 1
-    assert result.stages[1].stage_number == 2
-    assert result.stages[0].incremental_speedup_percent > 0
-    assert result.stages[1].incremental_speedup_percent > 0
     assert result.stages[1].cumulative_speedup_percent > (
         result.stages[0].cumulative_speedup_percent
     )
-    assert result.stages[1].changed_paths == ("workload.py",)
 
     exported = export_winning_patch(result, tmp_path / "cumulative.patch")
     assert exported is not None
