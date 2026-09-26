@@ -35,14 +35,17 @@ class CandidateEvaluation:
     changed_paths: tuple[str, ...]
     utility_score: float = 0.0
     attribution: PerformanceAttribution | None = None
+    baseline_state: str | None = None
+    stage_number: int | None = None
+    attempt_number: int | None = None
 
 
 @dataclass(frozen=True)
 class OptimizationStage:
     stage_number: int
     candidate_id: str
-    baseline_commit: str
-    resulting_commit: str
+    baseline_state: str
+    resulting_state: str
     incremental_speedup_percent: float
     cumulative_speedup_percent: float
     changed_paths: tuple[str, ...]
@@ -114,7 +117,7 @@ class OptimizationRun:
     winner_id: str | None
     environment: dict[str, str | int | None] | None = None
     baseline_profile: ProfileResult | None = None
-    provider_attempts: int = 1
+    provider_attempts: int = 0
     stages: tuple[OptimizationStage, ...] = ()
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
@@ -137,6 +140,20 @@ def _cumulative_speedup_percent(original_seconds: float, current_seconds: float)
     if original_seconds <= 0:
         return 0.0
     return ((original_seconds - current_seconds) / original_seconds) * 100.0
+
+
+def _optimization_state_id(
+    baseline_commit: str,
+    candidates: tuple[OptimizationCandidate, ...],
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(baseline_commit.encode())
+    for candidate in candidates:
+        digest.update(b"\0")
+        digest.update(candidate.candidate_id.encode())
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(candidate.patch.encode()).digest())
+    return f"state:{digest.hexdigest()[:16]}"
 
 
 def _git(repository: Path, *arguments: str) -> None:
@@ -380,11 +397,12 @@ def optimize(
     stages: list[OptimizationStage] = []
     original_baseline_seconds: float | None = None
     provider_attempts = 0
-    seen_patches: set[str] = set()
+    seen_patches: set[tuple[str, str]] = set()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
         promoted = False
+        baseline_state = _optimization_state_id(commit, tuple(accepted_sequence))
 
         for stage_attempt in range(1, maximum_provider_attempts + 1):
             with _worktree(repository, commit) as stage_tree:
@@ -419,9 +437,10 @@ def optimize(
             used_ids = {item.candidate.candidate_id for item in evaluations}
             for candidate in candidates:
                 patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
-                if patch_hash in seen_patches:
+                patch_key = (baseline_state, patch_hash)
+                if patch_key in seen_patches:
                     continue
-                seen_patches.add(patch_hash)
+                seen_patches.add(patch_key)
                 if candidate.candidate_id in used_ids:
                     candidate = replace(
                         candidate,
@@ -465,6 +484,9 @@ def optimize(
                                     "candidate failed the correctness command",
                                     changed_paths,
                                     0.0,
+                                    baseline_state=baseline_state,
+                                    stage_number=stage_number,
+                                    attempt_number=stage_attempt,
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -515,6 +537,9 @@ def optimize(
                             changed_paths,
                             result.utility_score,
                             _attribution(candidate, result, request),
+                            baseline_state=baseline_state,
+                            stage_number=stage_number,
+                            attempt_number=stage_attempt,
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -529,7 +554,15 @@ def optimize(
                             )
                 except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
                     evaluation = CandidateEvaluation(
-                        candidate, "invalid", None, str(exc), (), 0.0
+                        candidate,
+                        "invalid",
+                        None,
+                        str(exc),
+                        (),
+                        0.0,
+                        baseline_state=baseline_state,
+                        stage_number=stage_number,
+                        attempt_number=stage_attempt,
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
@@ -563,13 +596,14 @@ def optimize(
             selected = accepted[0]
             assert selected.result is not None
             accepted_sequence.append(selected.candidate)
+            resulting_state = _optimization_state_id(commit, tuple(accepted_sequence))
             assert original_baseline_seconds is not None
             stages.append(
                 OptimizationStage(
                     stage_number=stage_number,
                     candidate_id=selected.candidate.candidate_id,
-                    baseline_commit=commit,
-                    resulting_commit=commit,
+                    baseline_state=baseline_state,
+                    resulting_state=resulting_state,
                     incremental_speedup_percent=selected.result.speedup_percent,
                     cumulative_speedup_percent=_cumulative_speedup_percent(
                         original_baseline_seconds,
