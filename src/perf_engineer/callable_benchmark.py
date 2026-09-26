@@ -141,11 +141,14 @@ def run_paired_callable_benchmarks(
     maximum_rounds: int = 21,
     warmups: int = 2,
     target_sample_seconds: float = 0.1,
+    minimum_improvement_percent: float = 0.0,
     policy: ExecutionPolicy | None = None,
 ) -> tuple[BenchmarkResult, BenchmarkResult]:
     """Measure an explicit callable in isolated persistent AB/BA workers."""
     if minimum_rounds < 3 or maximum_rounds < minimum_rounds:
         raise ValueError("callable rounds require 3 <= minimum_rounds <= maximum_rounds")
+    if minimum_improvement_percent < 0:
+        raise ValueError("minimum improvement must be zero or greater")
     selected_policy = policy or ExecutionPolicy()
     with (
         PythonCallableSession(target, cwd=baseline_cwd, policy=selected_policy) as baseline,
@@ -186,7 +189,7 @@ def run_paired_callable_benchmarks(
             center = statistics.median(effects)
             mad = statistics.median(abs(effect - center) for effect in effects)
             confidence_low, _ = _bootstrap_median_interval(effects)
-            if mad <= 1.5 and confidence_low > 0.0:
+            if mad <= 1.5 and confidence_low >= minimum_improvement_percent:
                 break
 
     def summarize(name: str) -> BenchmarkResult:
