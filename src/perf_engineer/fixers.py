@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import difflib
+from itertools import combinations
 from dataclasses import dataclass
 
 from .providers import OptimizationCandidate, OptimizationRequest
@@ -84,15 +85,24 @@ def _rewrite_python_plans(source: str) -> list[_Rewrite]:
     )
     applicable: list[tuple[type[ast.NodeTransformer], str, str, str]] = []
     plans: list[_Rewrite] = []
+    seen_sources: set[str] = set()
     for transformer_type, title, rationale, strategy in specs:
         rewrite = _apply_transformers(source, ((transformer_type, title, rationale, strategy),))
         if rewrite is not None:
             applicable.append((transformer_type, title, rationale, strategy))
-            plans.append(rewrite)
-    if len(applicable) > 1:
-        combined = _apply_transformers(source, tuple(applicable))
-        if combined is not None:
-            plans.append(combined)
+            if rewrite.source not in seen_sources:
+                plans.append(rewrite)
+                seen_sources.add(rewrite.source)
+
+    # Explore smaller combinations before larger ones. This keeps the search useful
+    # under a tight candidate budget while correctness and benchmarking still decide
+    # which candidate, if any, is worth keeping.
+    for size in range(2, len(applicable) + 1):
+        for selected in combinations(applicable, size):
+            combined = _apply_transformers(source, tuple(selected))
+            if combined is not None and combined.source not in seen_sources:
+                plans.append(combined)
+                seen_sources.add(combined.source)
     return plans
 
 
