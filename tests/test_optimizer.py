@@ -174,9 +174,17 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert exported is not None
     patch_text = exported.read_text(encoding="utf-8")
     assert "-time.sleep(0.20)" in patch_text
-    assert "+time.sleep(0.10)" in patch_text
-    assert "-time.sleep(0.10)" in patch_text
     assert "+time.sleep(0.01)" in patch_text
+    assert "+time.sleep(0.10)" not in patch_text
+    assert "-time.sleep(0.10)" not in patch_text
+
+    verification = tmp_path / "verification"
+    subprocess.run(["git", "clone", "-q", str(repository), str(verification)], check=True)
+    subprocess.run(
+        ["git", "-C", str(verification), "apply", str(exported.resolve())],
+        check=True,
+    )
+    assert "time.sleep(0.01)" in (verification / "workload.py").read_text(encoding="utf-8")
 
 
 def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
