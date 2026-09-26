@@ -51,7 +51,11 @@ def test_posix_resident_memory_returns_zero_for_missing_process() -> None:
 
 def test_posix_runner_reports_failed_command_stderr(tmp_path: Path) -> None:
     result = LocalProcessRunner().run(
-        [sys.executable, "-c", "import sys; print('expected failure', file=sys.stderr); raise SystemExit(7)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('expected failure', file=sys.stderr); raise SystemExit(7)",
+        ],
         cwd=tmp_path,
         policy=ExecutionPolicy(),
     )
