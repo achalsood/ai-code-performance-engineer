@@ -598,11 +598,25 @@ def save_optimization(run: OptimizationRun, output_directory: Path) -> Path:
 
 
 def export_winning_patch(run: OptimizationRun, destination: Path) -> Path | None:
-    winner = next(
-        (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id), None
-    )
-    if winner is None:
+    if not run.winner_id:
+        return None
+    accepted_ids = {stage.candidate_id for stage in run.stages}
+    if accepted_ids:
+        patches = [
+            evaluation.candidate.patch
+            for evaluation in run.evaluations
+            if evaluation.candidate.candidate_id in accepted_ids
+            and evaluation.result
+            and evaluation.result.decision is Decision.ACCEPT
+        ]
+    else:
+        winner = next(
+            (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id),
+            None,
+        )
+        patches = [winner.candidate.patch] if winner is not None else []
+    if not patches:
         return None
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(winner.candidate.patch, encoding="utf-8")
+    destination.write_text("\n".join(patch.rstrip() for patch in patches) + "\n", encoding="utf-8")
     return destination
