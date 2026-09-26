@@ -32,6 +32,10 @@ def _specs_are_compatible(specs: tuple[_RewriteSpec, ...]) -> bool:
     return all(not spec.conflicts.intersection(strategies) for spec in specs)
 
 
+def _spec_evidence_score(spec: _RewriteSpec, rule_scores: dict[str, int]) -> int:
+    return sum(rule_scores.get(rule_id, 0) for rule_id in spec.rule_ids)
+
+
 class DeterministicFixProvider:
     """Generate conservative source rewrites for analyzer findings without an LLM."""
 
@@ -108,9 +112,9 @@ def _rewrite_python_plans(
             rule_ids=frozenset({"PERF001"}),
         ),
     )
+    rule_scores: dict[str, int] = {}
     if findings:
         severity_weight = {"high": 3, "medium": 2, "low": 1}
-        rule_scores: dict[str, int] = {}
         for finding in findings:
             rule_scores[finding.rule_id] = rule_scores.get(finding.rule_id, 0) + (
                 severity_weight.get(finding.severity, 1)
@@ -120,7 +124,7 @@ def _rewrite_python_plans(
             sorted(
                 specs,
                 key=lambda spec: (
-                    -sum(rule_scores.get(rule_id, 0) for rule_id in spec.rule_ids),
+                    -_spec_evidence_score(spec, rule_scores),
                     declaration_order[spec.strategy],
                 ),
             )
@@ -141,9 +145,19 @@ def _rewrite_python_plans(
     # search useful under a tight candidate budget while correctness and
     # benchmarking still decide which candidate, if any, is worth keeping.
     for size in range(2, len(applicable) + 1):
-        for selected in combinations(applicable, size):
-            if not _specs_are_compatible(selected):
-                continue
+        groups = [
+            selected
+            for selected in combinations(applicable, size)
+            if _specs_are_compatible(selected)
+        ]
+        order = {spec.strategy: index for index, spec in enumerate(applicable)}
+        groups.sort(
+            key=lambda selected: (
+                -sum(_spec_evidence_score(spec, rule_scores) for spec in selected),
+                tuple(order[spec.strategy] for spec in selected),
+            )
+        )
+        for selected in groups:
             combined = _apply_transformers(source, selected)
             if combined is not None and combined.source not in seen_sources:
                 plans.append(combined)
