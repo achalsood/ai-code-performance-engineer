@@ -420,7 +420,10 @@ def optimize(
             if candidate.candidate_id in used_ids:
                 candidate = replace(
                     candidate,
-                    candidate_id=f"stage-{len(stages) + 1}-attempt-{stage_attempt}-{candidate.candidate_id}",
+                    candidate_id=(
+                        f"stage-{len(stages) + 1}-attempt-{stage_attempt}-"
+                        f"{candidate.candidate_id}"
+                    ),
                 )
             used_ids.add(candidate.candidate_id)
             fresh_candidates.append(candidate)
