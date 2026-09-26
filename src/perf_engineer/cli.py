@@ -14,6 +14,7 @@ from .agent_arena import run_agent_arena, save_agent_arena
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import BenchmarkError, run_adaptive_paired_benchmarks, run_benchmark
+from .callable_benchmark import PythonCallableTarget
 from .evaluation import evaluate_corpus
 from .execution import DockerRunner, ExecutionPolicy, LocalProcessRunner
 from .experiments import run_experiment, save_record
@@ -39,6 +40,13 @@ def _command(value: str) -> list[str]:
     if not command:
         raise argparse.ArgumentTypeError("command cannot be empty")
     return command
+
+
+def _python_callable(value: str) -> PythonCallableTarget:
+    module, separator, callable_name = value.partition(":")
+    if not separator or not module or not callable_name:
+        raise argparse.ArgumentTypeError("callable must use MODULE:CALLABLE syntax")
+    return PythonCallableTarget(module, callable_name)
 
 
 def _positive_int(value: str) -> int:
@@ -151,7 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
     provider_group.add_argument("--provider", choices=("openai", "ollama"))
     optimize_parser.add_argument("--model")
     optimize_parser.add_argument("--provider-base-url")
-    optimize_parser.add_argument("--benchmark", type=_command, required=True)
+    benchmark_group = optimize_parser.add_mutually_exclusive_group(required=True)
+    benchmark_group.add_argument("--benchmark", type=_command)
+    benchmark_group.add_argument(
+        "--benchmark-callable",
+        type=_python_callable,
+        help="benchmark an explicit Python callable using MODULE:CALLABLE syntax",
+    )
     optimize_parser.add_argument("--test", type=_command, required=True)
     optimize_parser.add_argument("--rounds", type=_positive_int, default=7)
     optimize_parser.add_argument("--maximum-rounds", type=_positive_int, default=21)
@@ -187,7 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="copy a benchmark fixture into a temporary Git repository before optimizing",
     )
     fix.add_argument("--baseline-ref", default="HEAD")
-    fix.add_argument("--benchmark", type=_command, required=True)
+    benchmark_group = fix.add_mutually_exclusive_group(required=True)
+    benchmark_group.add_argument("--benchmark", type=_command)
+    benchmark_group.add_argument(
+        "--benchmark-callable",
+        type=_python_callable,
+        help="benchmark an explicit Python callable using MODULE:CALLABLE syntax",
+    )
     fix.add_argument("--test", type=_command, required=True)
     fix.add_argument("--rounds", type=_positive_int, default=7)
     fix.add_argument("--maximum-rounds", type=_positive_int, default=21)
@@ -360,6 +380,7 @@ def _run_optimize(args: argparse.Namespace) -> int:
         baseline_ref=args.baseline_ref,
         provider=provider,
         benchmark_command=args.benchmark,
+        benchmark_callable=args.benchmark_callable,
         test_command=args.test,
         rounds=args.rounds,
         maximum_candidates=args.maximum_candidates,
@@ -399,6 +420,7 @@ def _run_fix(args: argparse.Namespace) -> int:
             baseline_ref=args.baseline_ref,
             provider=DeterministicFixProvider(),
             benchmark_command=args.benchmark,
+            benchmark_callable=args.benchmark_callable,
             test_command=args.test,
             rounds=args.rounds,
             maximum_candidates=args.maximum_candidates,
