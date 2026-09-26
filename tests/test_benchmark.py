@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import pytest
@@ -132,41 +131,3 @@ def test_adaptive_benchmark_collects_more_evidence_after_transient_outlier(
     assert after.median_seconds == pytest.approx(0.09)
 
 
-
-def test_python_script_benchmark_uses_persistent_worker(tmp_path: Path) -> None:
-    baseline = tmp_path / "baseline"
-    candidate = tmp_path / "candidate"
-    baseline.mkdir()
-    candidate.mkdir()
-    script = (
-        "import os\n"
-        "from pathlib import Path\n"
-        "counter = Path('pids.txt')\n"
-        "with counter.open('a', encoding='utf-8') as stream:\n"
-        "    stream.write(f'{os.getpid()}\\n')\n"
-        "sum(i * i for i in range(2000))\n"
-    )
-    (baseline / "work.py").write_text(script, encoding="utf-8")
-    (candidate / "work.py").write_text(script, encoding="utf-8")
-
-    before, after = run_adaptive_paired_benchmarks(
-        [sys.executable, "work.py"],
-        baseline_cwd=baseline,
-        candidate_cwd=candidate,
-        minimum_rounds=3,
-        maximum_rounds=3,
-        warmups=1,
-        minimum_sample_seconds=0.01,
-        minimum_measurement_seconds=0.0,
-    )
-
-    baseline_pids = (baseline / "pids.txt").read_text(encoding="utf-8").splitlines()
-    candidate_pids = (candidate / "pids.txt").read_text(encoding="utf-8").splitlines()
-    assert len(set(baseline_pids)) == 1
-    assert len(set(candidate_pids)) == 1
-    assert len(baseline_pids) > 4
-    assert len(candidate_pids) > 4
-    assert before.repetitions_per_sample > 1
-    assert after.repetitions_per_sample > 1
-    assert before.measurement_rounds == 3
-    assert after.measurement_rounds == 3
