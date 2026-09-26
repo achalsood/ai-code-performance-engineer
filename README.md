@@ -26,7 +26,10 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Python, JavaScript, and TypeScript AST analysis plus normalized profiler adapters
 - Secret-redacted AI context, content hashes, and reproducible environment fingerprints
 - Automatic Python baseline profiling with repository-owned hotspot prioritization
-- Measurement-guided AI refinement with duplicate-patch suppression
+- Measurement-guided AI refinement with state-aware duplicate-patch suppression
+- Cumulative multi-stage optimization that re-analyzes each promoted state before generating the next alternatives
+- Direct original-vs-final verification and reproducible unified final patch export
+- Deterministic optimization-state identities with stage/attempt provenance for every evaluated candidate
 
 ## Quick start
 
@@ -160,12 +163,13 @@ ranked cumulative-time hotspots only for files inside the repository, and those 
 first in its bounded source context. Use `--profile-guidance off` when profiling is handled
 externally or the workload cannot run under `cProfile`.
 
-AI generation is a bounded search rather than a one-shot response. Candidates declare a strategy,
-expected impact, and risk, and providers are instructed to diversify across algorithmic complexity,
-data structures, repeated work, allocations, serialization, I/O batching, and cache locality. If
-the first batch produces no accepted patch, the next request includes concise measured feedback for
-each failure. Identical patches are never benchmarked twice, candidate IDs remain unique across
-attempts, and `--maximum-provider-attempts` bounds model cost.
+AI generation is a bounded, multi-stage search rather than a one-shot response. Candidates declare
+a strategy, expected impact, and risk, and providers are instructed to diversify across algorithmic
+complexity, data structures, repeated work, allocations, serialization, I/O batching, and cache
+locality. If an attempt produces no accepted patch, the next attempt in that stage receives concise
+measured feedback for each failure. `--maximum-provider-attempts` bounds refinement cost within a
+stage, while promoted candidates advance the optimizer to a fresh state for the next stage. Duplicate
+patches are suppressed per optimization state and candidate IDs remain unique across attempts.
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.
@@ -199,16 +203,41 @@ candidate, and `1` for an execution error. This makes the verdict usable in CI.
 ## Architecture
 
 ```text
-Repository -> Static analysis -> Candidate patch -> Correctness gate
-                                      |                  |
-                                      +-> Benchmark -----+
-                                               |
-                                        Accept / Reject
+Repository baseline (S0)
+        |
+        v
+Analyze + profile current state
+        |
+        v
+Generate alternative candidates
+        |
+        v
+Correctness -> paired benchmark -> attribution -> rank
+        |
+        +-- no accepted candidate --> measured provider refinement
+        |
+        v
+Promote best verified candidate (S1)
+        |
+        +-- re-analyze/re-profile --> next optimization stage
+        |
+        v
+Final original-vs-final verification
+        |
+        v
+Reviewable unified patch
 ```
 
-The current release establishes the deterministic core and repository runner. Planned layers
-are profiler adapters, an optional LLM candidate provider, sandboxed containers, ranked
-multi-candidate search, and a historical evaluation dataset.
+Candidates within a stage are alternatives measured against the same current-state baseline.
+Only the best verified candidate is promoted. The promoted result becomes a deterministic new
+optimization state, which is analyzed again before the next stage generates fresh alternatives.
+Provider attempts are bounded independently within each stage, and every evaluation records the
+state, stage, and attempt that produced it. Patch deduplication is state-aware, so a patch shape
+may be reconsidered when the cumulative source state has genuinely changed.
+
+After the final promoted stage, the engine reconstructs the complete accepted sequence in an
+isolated worktree, reruns correctness, directly benchmarks the original repository against the
+final cumulative state, and exports one reproducible original-to-final unified diff.
 
 ## Engineering principles
 
@@ -242,5 +271,6 @@ pytest
 
 ## Release status
 
-Version 1.0.0 implements the complete evidence-driven optimization pipeline. See
+Version 1.1.0 extends the evidence-driven pipeline with cumulative multi-stage optimization,
+state-aware provenance, direct final verification, and reproducible original-to-final patch export. See
 [CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
