@@ -516,7 +516,15 @@ def optimize(
             )
         )
         if not accepted:
-            break
+            if provider_attempts >= maximum_provider_attempts:
+                break
+            provider_attempts += 1
+            if audit_logger:
+                audit_logger.append(
+                    "provider_refined",
+                    {"attempt": provider_attempts, "candidate_count": 0},
+                )
+            continue
 
         selected = accepted[0]
         assert selected.result is not None
