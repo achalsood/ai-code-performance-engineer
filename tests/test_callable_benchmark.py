@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -161,3 +163,89 @@ def test_callable_session_enforces_memory_limit(tmp_path: Path) -> None:
         policy=ExecutionPolicy(memory_bytes=5_000_000),
     ) as session, pytest.raises(CallableBenchmarkError, match="memory limit"):
         session.measure()
+
+
+def test_callable_output_does_not_corrupt_worker_protocol(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "import sys\n"
+        "def benchmark():\n"
+        "    print('target stdout')\n"
+        "    print('target stderr', file=sys.stderr)\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    ) as session:
+        measurement = session.measure(2)
+
+    assert measurement.wall_seconds > 0.0
+
+
+def test_callable_exception_is_reported_as_target_failure(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "def benchmark():\n"
+        "    raise RuntimeError('benchmark exploded')\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    ) as session, pytest.raises(
+        CallableBenchmarkError,
+        match="callable benchmark target failed: RuntimeError: benchmark exploded",
+    ):
+        session.measure()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+def test_callable_timeout_terminates_descendant_processes(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "def benchmark():\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "    Path('child.pid').write_text(str(child.pid), encoding='utf-8')\n"
+        "    time.sleep(30)\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(timeout_seconds=0.1),
+    ) as session, pytest.raises(CallableBenchmarkError, match="timed out"):
+        session.measure()
+
+    child_pid = int((tmp_path / "child.pid").read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"warmups": -1}, "warmups cannot be negative"),
+        ({"target_sample_seconds": 0.0}, "target sample seconds must be positive"),
+        ({"target_sample_seconds": -0.1}, "target sample seconds must be positive"),
+    ],
+)
+def test_callable_benchmark_rejects_invalid_sampling_inputs(
+    tmp_path: Path,
+    kwargs: dict[str, int | float],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        run_paired_callable_benchmarks(
+            PythonCallableTarget("workload", "benchmark"),
+            baseline_cwd=tmp_path,
+            candidate_cwd=tmp_path,
+            **kwargs,
+        )

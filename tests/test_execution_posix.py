@@ -12,9 +12,9 @@ from perf_engineer.execution import (
     ExecutionError,
     ExecutionPolicy,
     LocalProcessRunner,
-    _popen_platform_options,
     _process_group_memory_bytes,
     _resident_memory_bytes,
+    popen_platform_options,
 )
 
 
@@ -32,7 +32,7 @@ def test_posix_runner_reports_cpu_and_success(tmp_path: Path) -> None:
 
 
 def test_posix_platform_options_create_isolated_session() -> None:
-    options = _popen_platform_options(ExecutionPolicy())
+    options = popen_platform_options(ExecutionPolicy())
     assert options["start_new_session"] is True
     assert callable(options["preexec_fn"])
 

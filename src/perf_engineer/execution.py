@@ -61,13 +61,13 @@ def sanitized_environment() -> dict[str, str]:
     return environment
 
 
-def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
+def popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
     if os.name == "posix":
         return execution_posix.popen_platform_options(policy)
     return execution_windows.popen_platform_options(policy)
 
 
-def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+def terminate_process_tree(process: subprocess.Popen[Any]) -> None:
     if os.name == "posix":
         execution_posix.terminate_process_tree(process)
     else:
@@ -116,7 +116,7 @@ class LocalProcessRunner:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=errors,
-                **_popen_platform_options(policy),
+                **popen_platform_options(policy),
             )
             deadline = started + policy.timeout_seconds
             stopped = threading.Event()
@@ -147,7 +147,7 @@ class LocalProcessRunner:
                         violation = "timeout"
                     else:
                         continue
-                    _terminate_process_tree(process)
+                    terminate_process_tree(process)
                     return
 
             monitor_thread = threading.Thread(target=monitor, daemon=True)
