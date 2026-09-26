@@ -169,6 +169,12 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert result.stages[1].cumulative_speedup_percent > (
         result.stages[0].cumulative_speedup_percent
     )
+    assert result.final_verification is not None
+    assert result.final_verification.correctness_passed
+    assert result.final_verification.decision.value == "accept"
+    assert result.final_verification.speedup_percent > 0
+    assert result.final_verification.baseline.median_seconds > 0.18
+    assert result.final_verification.candidate.median_seconds < 0.05
 
     exported = export_winning_patch(result, tmp_path / "cumulative.patch")
     assert exported is not None
