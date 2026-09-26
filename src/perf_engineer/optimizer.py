@@ -376,61 +376,63 @@ def optimize(
     stages: list[OptimizationStage] = []
     original_baseline_seconds: float | None = None
     provider_attempts = 1
-    candidate_index = 0
-    seen_patches = {hashlib.sha256(item.patch.encode()).hexdigest() for item in candidates}
-    while candidate_index < len(candidates) or provider_attempts < maximum_provider_attempts:
-        if candidate_index >= len(candidates):
-            if any(item.result and item.result.decision is Decision.ACCEPT for item in evaluations):
-                break
-            provider_attempts += 1
-            refinement_hints = _refinement_hints(evaluations)
-            refined_request = replace(
+    seen_patches: set[str] = set()
+
+    while True:
+        stage_evaluations: list[CandidateEvaluation] = []
+        with _worktree(repository, commit) as stage_tree:
+            _apply_candidate_sequence(stage_tree, tuple(accepted_sequence))
+            stage_profile: ProfileResult | None = None
+            if (
+                profile_guidance
+                and benchmark_command is not None
+                and "python" in Path(benchmark_command[0]).name.lower()
+            ):
+                try:
+                    stage_profile = CProfileAdapter(maximum_hotspots=20).profile(
+                        benchmark_command, cwd=stage_tree, policy=selected_policy
+                    )
+                except ProfilingError:
+                    stage_profile = None
+            request = _request(repository, stage_tree, maximum_candidates, stage_profile)
+            request = replace(
                 request,
                 attempt_number=provider_attempts,
                 feedback=_candidate_feedback(evaluations),
-                optimization_hints=request.optimization_hints + refinement_hints,
+                optimization_hints=request.optimization_hints + _refinement_hints(evaluations),
             )
-            refined = provider.generate(refined_request)
-            additions: list[OptimizationCandidate] = []
-            used_ids = {item.candidate_id for item in candidates}
-            for candidate in refined:
-                patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
-                if patch_hash in seen_patches:
-                    continue
-                seen_patches.add(patch_hash)
-                if candidate.candidate_id in used_ids:
-                    candidate = replace(
-                        candidate,
-                        candidate_id=f"attempt-{provider_attempts}-{candidate.candidate_id}",
-                    )
-                used_ids.add(candidate.candidate_id)
-                additions.append(candidate)
-            candidates.extend(additions)
-            if not additions:
-                break
-            if audit_logger:
-                audit_logger.append(
-                    "provider_refined",
-                    {"attempt": provider_attempts, "candidate_count": len(additions)},
+            candidates = provider.generate(request)
+
+        fresh_candidates: list[OptimizationCandidate] = []
+        used_ids = {item.candidate.candidate_id for item in evaluations}
+        for candidate in candidates:
+            patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
+            if patch_hash in seen_patches:
+                continue
+            seen_patches.add(patch_hash)
+            if candidate.candidate_id in used_ids:
+                candidate = replace(
+                    candidate,
+                    candidate_id=f"attempt-{provider_attempts}-{candidate.candidate_id}",
                 )
-            continue
-        candidate = candidates[candidate_index]
-        candidate_index += 1
-        try:
-            with _worktree(repository, commit) as baseline_tree:
-                with _worktree(repository, commit) as candidate_tree:
-                    _apply_candidate_sequence(baseline_tree, tuple(accepted_sequence))
-                    _apply_candidate_sequence(candidate_tree, tuple(accepted_sequence))
-                    changed_paths = apply_patch(candidate_tree, candidate.patch)
-                    correctness = run_correctness(
-                        test_command,
-                        cwd=candidate_tree,
-                        runner=selected_runner,
-                        policy=selected_policy,
-                    )
-                    if not correctness:
-                        evaluations.append(
-                            CandidateEvaluation(
+            used_ids.add(candidate.candidate_id)
+            fresh_candidates.append(candidate)
+
+        for candidate in fresh_candidates:
+            try:
+                with _worktree(repository, commit) as baseline_tree:
+                    with _worktree(repository, commit) as candidate_tree:
+                        _apply_candidate_sequence(baseline_tree, tuple(accepted_sequence))
+                        _apply_candidate_sequence(candidate_tree, tuple(accepted_sequence))
+                        changed_paths = apply_patch(candidate_tree, candidate.patch)
+                        correctness = run_correctness(
+                            test_command,
+                            cwd=candidate_tree,
+                            runner=selected_runner,
+                            policy=selected_policy,
+                        )
+                        if not correctness:
+                            evaluation = CandidateEvaluation(
                                 candidate,
                                 Decision.REJECT.value,
                                 None,
@@ -438,51 +440,43 @@ def optimize(
                                 changed_paths,
                                 0.0,
                             )
-                        )
-                        if audit_logger:
-                            audit_logger.append(
-                                "candidate_evaluated",
-                                {
-                                    "candidate_id": candidate.candidate_id,
-                                    "status": Decision.REJECT.value,
-                                },
+                            evaluations.append(evaluation)
+                            stage_evaluations.append(evaluation)
+                            continue
+                        if benchmark_callable is not None:
+                            baseline, measured = run_paired_callable_benchmarks(
+                                benchmark_callable,
+                                baseline_cwd=baseline_tree,
+                                candidate_cwd=candidate_tree,
+                                minimum_rounds=rounds,
+                                maximum_rounds=max(rounds, maximum_rounds),
+                                minimum_improvement_percent=minimum_improvement_percent,
+                                policy=selected_policy,
                             )
-                        continue
-                    if benchmark_callable is not None:
-                        baseline, measured = run_paired_callable_benchmarks(
-                            benchmark_callable,
-                            baseline_cwd=baseline_tree,
-                            candidate_cwd=candidate_tree,
-                            minimum_rounds=rounds,
-                            maximum_rounds=max(rounds, maximum_rounds),
-                            minimum_improvement_percent=minimum_improvement_percent,
-                            policy=selected_policy,
-                        )
-                    else:
-                        assert benchmark_command is not None
-                        baseline, measured = run_adaptive_paired_benchmarks(
-                            benchmark_command,
-                            baseline_cwd=baseline_tree,
-                            candidate_cwd=candidate_tree,
-                            minimum_rounds=rounds,
-                            maximum_rounds=max(rounds, maximum_rounds),
-                            runner=selected_runner,
-                            policy=selected_policy,
-                        )
-                paired_baselines.append(baseline)
-                if original_baseline_seconds is None:
-                    original_baseline_seconds = baseline.median_seconds
-                result = compare(
-                    baseline,
-                    measured,
-                    correctness_passed=correctness,
-                    minimum_improvement_percent=minimum_improvement_percent,
-                    paired=True,
-                    maximum_memory_regression_percent=maximum_memory_regression_percent,
-                    maximum_cpu_regression_percent=maximum_cpu_regression_percent,
-                )
-                evaluations.append(
-                    CandidateEvaluation(
+                        else:
+                            assert benchmark_command is not None
+                            baseline, measured = run_adaptive_paired_benchmarks(
+                                benchmark_command,
+                                baseline_cwd=baseline_tree,
+                                candidate_cwd=candidate_tree,
+                                minimum_rounds=rounds,
+                                maximum_rounds=max(rounds, maximum_rounds),
+                                runner=selected_runner,
+                                policy=selected_policy,
+                            )
+                    paired_baselines.append(baseline)
+                    if original_baseline_seconds is None:
+                        original_baseline_seconds = baseline.median_seconds
+                    result = compare(
+                        baseline,
+                        measured,
+                        correctness_passed=correctness,
+                        minimum_improvement_percent=minimum_improvement_percent,
+                        paired=True,
+                        maximum_memory_regression_percent=maximum_memory_regression_percent,
+                        maximum_cpu_regression_percent=maximum_cpu_regression_percent,
+                    )
+                    evaluation = CandidateEvaluation(
                         candidate,
                         result.decision.value,
                         result,
@@ -491,51 +485,69 @@ def optimize(
                         result.utility_score,
                         _attribution(candidate, result, request),
                     )
-                )
-                if result.decision is Decision.ACCEPT:
-                    accepted_sequence.append(candidate)
-                    assert original_baseline_seconds is not None
-                    stages.append(
-                        OptimizationStage(
-                            stage_number=len(stages) + 1,
-                            candidate_id=candidate.candidate_id,
-                            baseline_commit=commit,
-                            resulting_commit=commit,
-                            incremental_speedup_percent=result.speedup_percent,
-                            cumulative_speedup_percent=_cumulative_speedup_percent(
-                                original_baseline_seconds,
-                                result.candidate.median_seconds,
-                            ),
-                            changed_paths=changed_paths,
+                    evaluations.append(evaluation)
+                    stage_evaluations.append(evaluation)
+                    if audit_logger:
+                        audit_logger.append(
+                            "candidate_evaluated",
+                            {
+                                "candidate_id": candidate.candidate_id,
+                                "status": result.decision.value,
+                            },
                         )
-                    )
-                if audit_logger:
-                    audit_logger.append(
-                        "candidate_evaluated",
-                        {"candidate_id": candidate.candidate_id, "status": result.decision.value},
-                    )
-        except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
-            evaluations.append(CandidateEvaluation(candidate, "invalid", None, str(exc), (), 0.0))
-            if audit_logger:
-                audit_logger.append(
-                    "candidate_invalid", {"candidate_id": candidate.candidate_id, "error": str(exc)}
+            except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
+                evaluation = CandidateEvaluation(
+                    candidate, "invalid", None, str(exc), (), 0.0
                 )
+                evaluations.append(evaluation)
+                stage_evaluations.append(evaluation)
 
-    accepted = [
-        item for item in evaluations if item.result and item.result.decision is Decision.ACCEPT
-    ]
-    accepted.sort(
-        key=lambda item: (
-            (
+        accepted = [
+            item
+            for item in stage_evaluations
+            if item.result and item.result.decision is Decision.ACCEPT
+        ]
+        accepted.sort(
+            key=lambda item: (
                 -item.utility_score,
-                -item.result.speedup_ci95_low,
-                item.result.candidate.peak_memory_bytes,
+                -item.result.speedup_ci95_low if item.result else 0.0,
+                item.result.candidate.peak_memory_bytes if item.result else 0,
                 item.candidate.candidate_id,
             )
-            if item.result
-            else (0.0, 0.0, 0, "")
         )
-    )
+        if not accepted:
+            break
+
+        selected = accepted[0]
+        assert selected.result is not None
+        accepted_sequence.append(selected.candidate)
+        assert original_baseline_seconds is not None
+        stages.append(
+            OptimizationStage(
+                stage_number=len(stages) + 1,
+                candidate_id=selected.candidate.candidate_id,
+                baseline_commit=commit,
+                resulting_commit=commit,
+                incremental_speedup_percent=selected.result.speedup_percent,
+                cumulative_speedup_percent=_cumulative_speedup_percent(
+                    original_baseline_seconds,
+                    selected.result.candidate.median_seconds,
+                ),
+                changed_paths=selected.changed_paths,
+            )
+        )
+        if len(stages) >= maximum_provider_attempts:
+            break
+        provider_attempts += 1
+        if audit_logger:
+            audit_logger.append(
+                "optimization_stage_promoted",
+                {
+                    "stage": len(stages),
+                    "candidate_id": selected.candidate.candidate_id,
+                },
+            )
+
     winner = stages[-1].candidate_id if stages else None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
