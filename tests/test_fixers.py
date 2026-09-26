@@ -1104,3 +1104,54 @@ def test_deterministic_provider_prioritizes_stronger_analyzer_evidence() -> None
 
     assert len(candidates) == 1
     assert candidates[0].strategy == "hoist-invariant-work"
+
+
+
+def test_deterministic_provider_prioritizes_stronger_combination_evidence() -> None:
+    source = """def optimize_three():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    items = [1, 2, 1, 3, 2]
+    counts = []
+    for item in items:
+        counts.append(items.count(item))
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, counts, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004", "example.py", 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF003", "example.py", 10, "medium",
+                ".count() performs a linear scan inside a loop.", "Precompute counts.",
+            ),
+            Finding(
+                "PERF002", "example.py", 16, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=4,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert [candidate.strategy for candidate in candidates] == [
+        "hoist-invariant-work",
+        "data-structure-index",
+        "membership-index",
+        "combined:hoist-invariant-work+data-structure-index",
+    ]
