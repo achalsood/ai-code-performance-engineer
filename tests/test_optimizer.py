@@ -481,28 +481,30 @@ def test_optimizer_receives_evidence_ranked_deterministic_candidates(
 
     baseline = BenchmarkResult(
         command=("python", "workload.py"),
-        rounds=1,
-        durations_seconds=(1.0,),
-        mean_seconds=1.0,
+        samples_seconds=(1.0,),
         median_seconds=1.0,
+        mean_seconds=1.0,
         stdev_seconds=0.0,
-        peak_memory_mb=1.0,
+        min_seconds=1.0,
+        max_seconds=1.0,
         cpu_mean_seconds=1.0,
+        peak_memory_bytes=1024 * 1024,
+        measurement_rounds=1,
     )
 
     def fake_pair(*args, **kwargs):
-        candidate = args[1]
         result = VerificationResult(
             decision=Decision.ACCEPT,
+            speedup_percent=10.0,
+            correctness_passed=True,
+            stable=True,
             reason="verified",
             baseline=baseline,
             candidate=baseline,
-            speedup_percent=10.0,
-            memory_change_percent=0.0,
-            cpu_change_percent=0.0,
-            correctness_passed=True,
             speedup_ci95_low=10.0,
             speedup_ci95_high=10.0,
+            memory_change_percent=0.0,
+            cpu_change_percent=0.0,
         )
         return baseline, baseline, result
 
