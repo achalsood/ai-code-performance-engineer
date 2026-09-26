@@ -174,6 +174,12 @@ def test_refinement_feedback_contains_structured_attribution() -> None:
     assert "wall_change=-20.00%" in feedback
     assert "memory_change=12.00%" in feedback
 
+    hints = optimizer._refinement_hints([evaluation])
+
+    assert len(hints) == 2
+    assert "Avoid repeating strategy membership-index" in hints[0]
+    assert "preserve the wall-time improvement" in hints[1]
+
 
 def test_attribution_resolves_candidate_evidence_to_analyzer_finding(tmp_path: Path) -> None:
     import perf_engineer.optimizer as optimizer
