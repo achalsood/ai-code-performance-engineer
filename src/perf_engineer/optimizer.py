@@ -420,9 +420,8 @@ def optimize(
             with _worktree(repository, commit) as baseline_tree:
                 with _worktree(repository, commit) as candidate_tree:
                     _apply_candidate_sequence(baseline_tree, tuple(accepted_sequence))
-                    changed_paths = _apply_candidate_sequence(
-                        candidate_tree, tuple(accepted_sequence) + (candidate,)
-                    )
+                    _apply_candidate_sequence(candidate_tree, tuple(accepted_sequence))
+                    changed_paths = apply_patch(candidate_tree, candidate.patch)
                     correctness = run_correctness(
                         test_command,
                         cwd=candidate_tree,
