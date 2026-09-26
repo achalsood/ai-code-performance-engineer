@@ -246,15 +246,20 @@ def _request(
 def _candidate_feedback(evaluations: list[CandidateEvaluation]) -> tuple[str, ...]:
     feedback: list[str] = []
     for evaluation in evaluations:
-        if evaluation.result:
+        attribution = evaluation.attribution
+        if evaluation.result and attribution:
             result = evaluation.result
+            evidence_ids = ", ".join(evaluation.candidate.target_evidence_ids) or "unlinked"
             feedback.append(
-                f"{evaluation.candidate.candidate_id} ({evaluation.candidate.strategy}): "
-                f"{result.decision.value}; {result.reason}; median speedup "
-                f"{result.speedup_percent:.2f}%; CI lower bound "
-                f"{result.speedup_ci95_low:.2f}%; memory change "
-                f"{result.memory_change_percent:.2f}%; CPU change "
-                f"{result.cpu_change_percent:.2f}%."
+                f"{evaluation.candidate.candidate_id} ({attribution.strategy}): "
+                f"target={attribution.targeted_issue}; evidence={evidence_ids}; "
+                f"decision={attribution.decision.value}; confidence={attribution.confidence}; "
+                f"wall_change={attribution.wall_change_percent:.2f}%; "
+                f"speedup_ci95=[{result.speedup_ci95_low:.2f}%, "
+                f"{result.speedup_ci95_high:.2f}%]; "
+                f"memory_change={attribution.memory_change_percent:.2f}%; "
+                f"cpu_change={attribution.cpu_change_percent:.2f}%; "
+                f"reason={result.reason}."
             )
         else:
             feedback.append(
