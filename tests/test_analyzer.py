@@ -24,3 +24,20 @@ def test_discovery_prunes_dependency_directories(tmp_path: Path) -> None:
     source.write_text("pass\n")
     dependency.write_text("for (;;) {}\n")
     assert discover_files(tmp_path) == [source]
+
+
+def test_ignores_membership_in_invariant_set_inside_loop(tmp_path: Path) -> None:
+    source = tmp_path / "safe.py"
+    source.write_text(
+        "allowed = {'.py', '.js'}\n"
+        "for path in paths:\n"
+        "    if path.suffix not in allowed:\n"
+        "        raise ValueError(path)\n"
+    )
+    assert "PERF004" not in {finding.rule_id for finding in analyze_file(source)}
+
+
+def test_detects_membership_in_loop_bound_sequence(tmp_path: Path) -> None:
+    source = tmp_path / "slow.py"
+    source.write_text("for items in batches:\n    if needle in items:\n        print(needle)\n")
+    assert "PERF004" in {finding.rule_id for finding in analyze_file(source)}
