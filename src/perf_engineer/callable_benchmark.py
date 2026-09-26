@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from .execution import ExecutionPolicy, sanitized_environment
+from .models import BenchmarkResult
 
 
 class CallableBenchmarkError(RuntimeError):
@@ -98,3 +100,79 @@ class PythonCallableSession:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+
+def run_paired_callable_benchmarks(
+    target: PythonCallableTarget,
+    *,
+    baseline_cwd: Path,
+    candidate_cwd: Path,
+    minimum_rounds: int = 7,
+    maximum_rounds: int = 21,
+    warmups: int = 2,
+    target_sample_seconds: float = 0.1,
+    policy: ExecutionPolicy | None = None,
+) -> tuple[BenchmarkResult, BenchmarkResult]:
+    """Measure an explicit callable in isolated persistent AB/BA workers."""
+    if minimum_rounds < 3 or maximum_rounds < minimum_rounds:
+        raise ValueError("callable rounds require 3 <= minimum_rounds <= maximum_rounds")
+    selected_policy = policy or ExecutionPolicy()
+    with (
+        PythonCallableSession(target, cwd=baseline_cwd, policy=selected_policy) as baseline,
+        PythonCallableSession(target, cwd=candidate_cwd, policy=selected_policy) as candidate,
+    ):
+        sessions = {"baseline": baseline, "candidate": candidate}
+        for _ in range(warmups):
+            baseline.measure()
+            candidate.measure()
+
+        probe = baseline.measure()
+        repetitions = max(
+            1,
+            min(
+                10_000,
+                int(target_sample_seconds / max(probe.wall_seconds, 1e-9) + 0.999999),
+            ),
+        )
+        wall: dict[str, list[float]] = {"baseline": [], "candidate": []}
+        cpu: dict[str, list[float]] = {"baseline": [], "candidate": []}
+
+        for round_index in range(maximum_rounds):
+            order = ("baseline", "candidate") if round_index % 2 == 0 else ("candidate", "baseline")
+            for name in order:
+                measured = sessions[name].measure(repetitions)
+                wall[name].append(measured.wall_seconds)
+                cpu[name].append(measured.cpu_seconds)
+
+            count = round_index + 1
+            if count < minimum_rounds:
+                continue
+            effects = [
+                (before - after) / before * 100 if before else 0.0
+                for before, after in zip(wall["baseline"], wall["candidate"], strict=True)
+            ]
+            center = statistics.median(effects)
+            mad = statistics.median(abs(effect - center) for effect in effects)
+            if mad <= 1.5:
+                break
+
+    def summarize(name: str) -> BenchmarkResult:
+        samples = wall[name]
+        return BenchmarkResult(
+            command=(f"python-callable:{target.module}:{target.callable_name}",),
+            samples_seconds=tuple(samples),
+            median_seconds=statistics.median(samples),
+            mean_seconds=statistics.fmean(samples),
+            stdev_seconds=statistics.stdev(samples),
+            min_seconds=min(samples),
+            max_seconds=max(samples),
+            cpu_mean_seconds=statistics.fmean(cpu[name]),
+            peak_memory_bytes=0,
+            calibration_probe_seconds=probe.wall_seconds,
+            repetitions_per_sample=repetitions,
+            measurement_rounds=len(samples),
+            total_measurement_seconds=sum(samples),
+        )
+
+    return summarize("baseline"), summarize("candidate")
