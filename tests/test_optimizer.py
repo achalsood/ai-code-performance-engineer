@@ -624,6 +624,7 @@ assert rank_queries([5], [1]) == [(1, 5, 5)]
         minimum_improvement_percent=5.0,
         profile_guidance=False,
         maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
     )
 
     assert result.winner_id == "deterministic-1"
@@ -819,6 +820,7 @@ assert len(ranked) == 250
         minimum_improvement_percent=5.0,
         profile_guidance=False,
         maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
     )
 
     assert [evaluation.candidate.strategy for evaluation in result.evaluations] == [
