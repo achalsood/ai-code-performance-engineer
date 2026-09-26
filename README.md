@@ -13,6 +13,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 
 - Python, JavaScript, and TypeScript AST analysis for common performance risks
 - Isolated command benchmarks with warmups, timeouts, deterministic hash seeds, and raw samples
+- Explicit persistent Python callable benchmarks for low-overhead algorithm measurements
 - Adaptive AB/BA trials with robust paired-effect statistics instead of trusting a single timing
 - Correctness gate that rejects fast but broken candidates
 - Machine-readable JSON reports and CI across Python 3.11–3.13
@@ -45,6 +46,25 @@ perf-engineer analyze src --format sarif --output performance.sarif
 perf-engineer analyze src --fail-on high
 ```
 
+For short Python algorithms, use the explicit callable benchmark mode instead of paying
+interpreter startup cost on every sample. The target uses `MODULE:CALLABLE` syntax and must be a
+zero-argument callable:
+
+```bash
+perf-engineer fix \
+  --repository . \
+  --benchmark-callable workload:benchmark \
+  --test "python -m pytest" \
+  --minimum-improvement 5
+```
+
+Callable benchmarks keep separate persistent baseline and candidate interpreters, warm them up,
+calibrate repetitions, and alternate AB/BA measurement order. They record wall time, CPU time,
+and peak process-tree memory, enforce timeout and memory limits, and continue sampling until the
+confidence evidence reaches the configured minimum-improvement threshold or the maximum round
+budget is exhausted. This mode is explicit: ordinary `--benchmark` commands retain fresh-process
+semantics and are never silently converted into persistent callable measurements.
+
 Run a complete experiment directly from two Git revisions:
 
 ```bash
@@ -71,6 +91,9 @@ perf-engineer optimize \
   --test "python -m pytest" \
   --maximum-candidates 3
 ```
+
+For an explicit Python microbenchmark, replace `--benchmark` with
+`--benchmark-callable package.workload:benchmark`. The two options are mutually exclusive.
 
 For repositories you do not fully trust, use the Docker backend:
 
