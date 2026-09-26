@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from perf_engineer.callable_benchmark import PythonCallableSession, PythonCallableTarget
+from perf_engineer.callable_benchmark import (
+    PythonCallableSession,
+    PythonCallableTarget,
+    run_paired_callable_benchmarks,
+)
 from perf_engineer.execution import ExecutionPolicy
 
 
@@ -47,3 +51,41 @@ def test_callable_sessions_keep_baseline_and_candidate_isolated(tmp_path: Path) 
         assert before.measure().wall_seconds > 0.0
         assert after.measure().wall_seconds > 0.0
         assert before._process.pid != after._process.pid
+
+
+
+def test_paired_callable_benchmark_detects_speedup(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    baseline.mkdir()
+    candidate.mkdir()
+    (baseline / "workload.py").write_text(
+        "def benchmark():\n"
+        "    total = 0\n"
+        "    for i in range(20000):\n"
+        "        total += i * i\n"
+        "    return total\n",
+        encoding="utf-8",
+    )
+    (candidate / "workload.py").write_text(
+        "def benchmark():\n"
+        "    return sum(i * i for i in range(2000))\n",
+        encoding="utf-8",
+    )
+
+    before, after = run_paired_callable_benchmarks(
+        PythonCallableTarget("workload", "benchmark"),
+        baseline_cwd=baseline,
+        candidate_cwd=candidate,
+        minimum_rounds=3,
+        maximum_rounds=5,
+        warmups=1,
+        target_sample_seconds=0.01,
+    )
+
+    assert before.measurement_rounds is not None
+    assert 3 <= before.measurement_rounds <= 5
+    assert after.measurement_rounds == before.measurement_rounds
+    assert before.repetitions_per_sample > 1
+    assert after.repetitions_per_sample == before.repetitions_per_sample
+    assert after.median_seconds < before.median_seconds
