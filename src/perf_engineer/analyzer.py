@@ -92,7 +92,7 @@ class PerformanceVisitor(ast.NodeVisitor):
             and isinstance(node.ops[0], (ast.In, ast.NotIn))
             and len(node.comparators) == 1
             and isinstance(node.comparators[0], ast.Name)
-            and node.comparators[0].id in set().union(*self._loop_bound_names)
+            and node.comparators[0].id not in set().union(*self._loop_bound_names)
             and node.comparators[0].id not in self._set_names
         ):
             self._add(
