@@ -14,6 +14,7 @@ from pathlib import Path
 from .analyzer import analyze_path
 from .audit import AuditLogger
 from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
+from .callable_benchmark import PythonCallableTarget, run_paired_callable_benchmarks
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, VerificationResult
@@ -212,7 +213,7 @@ def optimize(
     repository: Path,
     baseline_ref: str,
     provider: CandidateProvider,
-    benchmark_command: list[str],
+    benchmark_command: list[str] | None,
     test_command: list[str],
     rounds: int = 7,
     maximum_candidates: int = 3,
@@ -225,9 +226,12 @@ def optimize(
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
+    benchmark_callable: PythonCallableTarget | None = None,
 ) -> OptimizationRun:
     if maximum_provider_attempts < 1:
         raise ValueError("maximum_provider_attempts must be at least 1")
+    if (benchmark_command is None) == (benchmark_callable is None):
+        raise ValueError("provide exactly one benchmark command or callable")
     repository = repository.resolve()
     commit = resolve_commit(repository, baseline_ref)
     selected_runner = runner or LocalProcessRunner()
@@ -238,7 +242,7 @@ def optimize(
     with _worktree(repository, commit) as baseline_tree:
         if (
             profile_guidance
-            and benchmark_command
+            and benchmark_command is not None
             and "python" in Path(benchmark_command[0]).name.lower()
         ):
             try:
@@ -321,15 +325,26 @@ def optimize(
                                 },
                             )
                         continue
-                    baseline, measured = run_adaptive_paired_benchmarks(
-                        benchmark_command,
-                        baseline_cwd=baseline_tree,
-                        candidate_cwd=candidate_tree,
-                        minimum_rounds=rounds,
-                        maximum_rounds=max(rounds, maximum_rounds),
-                        runner=selected_runner,
-                        policy=selected_policy,
-                    )
+                    if benchmark_callable is not None:
+                        baseline, measured = run_paired_callable_benchmarks(
+                            benchmark_callable,
+                            baseline_cwd=baseline_tree,
+                            candidate_cwd=candidate_tree,
+                            minimum_rounds=rounds,
+                            maximum_rounds=max(rounds, maximum_rounds),
+                            policy=selected_policy,
+                        )
+                    else:
+                        assert benchmark_command is not None
+                        baseline, measured = run_adaptive_paired_benchmarks(
+                            benchmark_command,
+                            baseline_cwd=baseline_tree,
+                            candidate_cwd=candidate_tree,
+                            minimum_rounds=rounds,
+                            maximum_rounds=max(rounds, maximum_rounds),
+                            runner=selected_runner,
+                            policy=selected_policy,
+                        )
                 paired_baselines.append(baseline)
                 result = compare(
                     baseline,
@@ -384,8 +399,19 @@ def optimize(
         baseline = paired_baselines[0]
     else:
         with _worktree(repository, commit) as baseline_tree:
-            baseline = run_benchmark(
-                benchmark_command,
+            if benchmark_callable is not None:
+                baseline, _ = run_paired_callable_benchmarks(
+                    benchmark_callable,
+                    baseline_cwd=baseline_tree,
+                    candidate_cwd=baseline_tree,
+                    minimum_rounds=rounds,
+                    maximum_rounds=max(rounds, maximum_rounds),
+                    policy=selected_policy,
+                )
+            else:
+                assert benchmark_command is not None
+                baseline = run_benchmark(
+                    benchmark_command,
                 cwd=baseline_tree,
                 rounds=rounds,
                 runner=selected_runner,
