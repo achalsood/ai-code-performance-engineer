@@ -561,8 +561,10 @@ def optimize(
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
     if accepted_sequence:
-        with _worktree(repository, commit) as original_tree:
-            with _worktree(repository, commit) as final_tree:
+        with (
+            _worktree(repository, commit) as original_tree,
+            _worktree(repository, commit) as final_tree,
+        ):
                 _apply_candidate_sequence(final_tree, tuple(accepted_sequence))
                 final_correctness = run_correctness(
                     test_command,
@@ -601,7 +603,16 @@ def optimize(
                     maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                 )
                 diff = subprocess.run(
-                    ["git", "-C", str(final_tree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+                    [
+                        "git",
+                        "-C",
+                        str(final_tree),
+                        "diff",
+                        "--no-ext-diff",
+                        "--binary",
+                        "HEAD",
+                        "--",
+                    ],
                     capture_output=True,
                     text=True,
                     check=False,
