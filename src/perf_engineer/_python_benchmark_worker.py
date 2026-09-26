@@ -23,18 +23,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--module", required=True)
     parser.add_argument("--callable", dest="callable_name", required=True)
-    parser.add_argument("--request", type=Path, required=True)
-    parser.add_argument("--response", type=Path, required=True)
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path.cwd()))
     target = _load_callable(args.module, args.callable_name)
 
-    while True:
-        request = json.loads(args.request.read_text(encoding="utf-8"))
+    for line in sys.stdin:
+        request = json.loads(line)
         operation = request["operation"]
         if operation == "stop":
             return 0
+        if operation != "measure":
+            raise ValueError(f"unsupported worker operation: {operation}")
         repetitions = int(request.get("repetitions", 1))
         started = time.perf_counter()
         cpu_started = time.process_time()
@@ -44,8 +44,9 @@ def main() -> int:
             "wall_seconds": time.perf_counter() - started,
             "cpu_seconds": time.process_time() - cpu_started,
         }
-        args.response.write_text(json.dumps(payload), encoding="utf-8")
-        args.request.unlink(missing_ok=True)
+        sys.stdout.write(json.dumps(payload) + "\n")
+        sys.stdout.flush()
+    return 0
 
 
 if __name__ == "__main__":
