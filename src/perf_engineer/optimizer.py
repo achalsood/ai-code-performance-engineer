@@ -121,6 +121,16 @@ class OptimizationRun:
         return asdict(self)
 
 
+def _apply_candidate_sequence(
+    worktree: Path,
+    candidates: tuple[OptimizationCandidate, ...],
+) -> tuple[str, ...]:
+    changed_paths: list[str] = []
+    for candidate in candidates:
+        changed_paths.extend(apply_patch(worktree, candidate.patch))
+    return tuple(dict.fromkeys(changed_paths))
+
+
 def _cumulative_speedup_percent(original_seconds: float, current_seconds: float) -> float:
     if original_seconds <= 0:
         return 0.0
