@@ -160,6 +160,15 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert result.evaluations[0].result.speedup_percent > 5.0
     assert result.baseline.repetitions_per_sample > 1
     assert result.evaluations[0].result.candidate.peak_memory_bytes > 0
+    attribution = result.evaluations[0].attribution
+    assert attribution is not None
+    assert attribution.targeted_issue == "Less work"
+    assert attribution.strategy == "unspecified"
+    assert attribution.correctness_passed
+    assert attribution.decision.value == "accept"
+    assert attribution.baseline_wall_seconds > attribution.candidate_wall_seconds
+    assert attribution.wall_change_percent < 0
+    assert attribution.confidence in {"medium", "high"}
 
 
 @pytest.mark.performance
