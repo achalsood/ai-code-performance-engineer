@@ -122,7 +122,11 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
 
     class CumulativeProvider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
         def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
             source = request.files["workload.py"]
             if "time.sleep(0.20)" in source:
                 patch = """diff --git a/workload.py b/workload.py
@@ -148,18 +152,22 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
                 return [OptimizationCandidate("second", "Second", "Next speedup", patch)]
             return []
 
+    provider = CumulativeProvider()
     result = optimize(
         repository=repository,
         baseline_ref="HEAD",
-        provider=CumulativeProvider(),
+        provider=provider,
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
         rounds=5,
         maximum_rounds=7,
         profile_guidance=False,
-        maximum_provider_attempts=2,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=2,
     )
 
+    assert result.provider_attempts == 2
+    assert [request.attempt_number for request in provider.requests] == [1, 1]
     assert [item.status for item in result.evaluations] == ["accept", "accept"]
     second_result = result.evaluations[1].result
     assert second_result is not None
@@ -193,6 +201,67 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
         check=True,
     )
     assert "time.sleep(0.01)" in (verification / "workload.py").read_text(encoding="utf-8")
+
+
+
+def test_exhausts_stage_attempts_without_looping(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class InvalidProvider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
+            return [
+                OptimizationCandidate(
+                    f"invalid-{request.attempt_number}",
+                    "Invalid",
+                    "Exercise refinement exhaustion",
+                    "not a diff",
+                )
+            ]
+
+    provider = InvalidProvider()
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=provider,
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        rounds=1,
+        maximum_rounds=1,
+        profile_guidance=False,
+        maximum_provider_attempts=3,
+        maximum_optimization_stages=2,
+    )
+
+    assert result.provider_attempts == 3
+    assert [request.attempt_number for request in provider.requests] == [1, 2, 3]
+    assert len(result.evaluations) == 3
+    assert all(evaluation.status == "invalid" for evaluation in result.evaluations)
+    assert result.stages == ()
+    assert result.winner_id is None
+
+
+def test_rejects_zero_optimization_stages(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="maximum_optimization_stages must be at least 1"):
+        optimize(
+            repository=tmp_path,
+            baseline_ref="HEAD",
+            provider=FixedProvider(),
+            benchmark_command=[sys.executable, "workload.py"],
+            test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+            maximum_optimization_stages=0,
+        )
 
 
 def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
