@@ -97,11 +97,17 @@ class PythonCallableSession:
             raise CallableBenchmarkError(self._worker_error("callable benchmark worker failed"))
         try:
             payload = json.loads(line)
+            if "error" in payload:
+                raise CallableBenchmarkError(
+                    f"callable benchmark target failed: {payload['error']}"
+                )
             return CallableMeasurement(
                 wall_seconds=float(payload["wall_seconds"]),
                 cpu_seconds=float(payload["cpu_seconds"]),
                 peak_memory_bytes=memory_peak,
             )
+        except CallableBenchmarkError:
+            raise
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise CallableBenchmarkError("callable benchmark worker returned invalid data") from exc
 
