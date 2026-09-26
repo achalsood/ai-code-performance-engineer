@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -53,6 +54,7 @@ class PythonCallableSession:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            start_new_session=os.name == "posix",
         )
 
     def measure(self, repetitions: int = 1) -> CallableMeasurement:
