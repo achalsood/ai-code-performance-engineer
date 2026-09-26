@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -11,7 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .benchmark import _bootstrap_median_interval
-from .execution import ExecutionPolicy, process_tree_memory_bytes, sanitized_environment
+from .execution import (
+    ExecutionPolicy,
+    popen_platform_options,
+    process_tree_memory_bytes,
+    sanitized_environment,
+    terminate_process_tree,
+)
 from .models import BenchmarkResult
 
 
@@ -54,7 +59,7 @@ class PythonCallableSession:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            start_new_session=os.name == "posix",
+            **popen_platform_options(policy),
         )
 
     def measure(self, repetitions: int = 1) -> CallableMeasurement:
@@ -81,7 +86,7 @@ class PythonCallableSession:
         while reader.is_alive() and time.perf_counter() < deadline:
             memory_peak = max(memory_peak, process_tree_memory_bytes(self._process.pid))
             if memory_peak > self._policy.memory_bytes:
-                self._process.kill()
+                terminate_process_tree(self._process)
                 self._process.wait()
                 raise CallableBenchmarkError(
                     f"callable benchmark worker exceeded memory limit of "
@@ -89,7 +94,7 @@ class PythonCallableSession:
                 )
             reader.join(0.002)
         if reader.is_alive():
-            self._process.kill()
+            terminate_process_tree(self._process)
             self._process.wait()
             raise CallableBenchmarkError("callable benchmark worker timed out")
         line = line_holder[0] if line_holder else ""
@@ -129,7 +134,7 @@ class PythonCallableSession:
         try:
             self._process.wait(timeout=min(self._policy.timeout_seconds, 2.0))
         except subprocess.TimeoutExpired:
-            self._process.kill()
+            terminate_process_tree(self._process)
             self._process.wait()
 
     def __enter__(self) -> PythonCallableSession:
