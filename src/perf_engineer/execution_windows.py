@@ -23,7 +23,8 @@ def _memory_counters(process_id: int) -> tuple[int, int, int, int] | None:
         _fields_ = [
             ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
             ("PeakWorkingSetSize", ctypes.c_ulonglong), ("WorkingSetSize", ctypes.c_ulonglong),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong), ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
+            ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
             ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
             ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong), ("PagefileUsage", ctypes.c_ulonglong),
             ("PeakPagefileUsage", ctypes.c_ulonglong),
