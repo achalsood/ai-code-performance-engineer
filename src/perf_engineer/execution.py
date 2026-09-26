@@ -353,6 +353,11 @@ def _process_group_memory_bytes(process_group_id: int) -> int:
         return total
     return 0
 
+
+def process_tree_memory_bytes(process_id: int) -> int:
+    """Return the current resident memory of a process tree."""
+    return _process_group_memory_bytes(process_id)
+
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
 
