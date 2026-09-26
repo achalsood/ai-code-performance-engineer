@@ -17,7 +17,7 @@ from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
 from .callable_benchmark import PythonCallableTarget, run_paired_callable_benchmarks
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
-from .models import BenchmarkResult, Decision, VerificationResult
+from .models import BenchmarkResult, Decision, PerformanceAttribution, VerificationResult
 from .patches import PatchValidationError, apply_patch
 from .profiling import CProfileAdapter, ProfileResult, ProfilingError
 from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
@@ -34,6 +34,34 @@ class CandidateEvaluation:
     error: str | None
     changed_paths: tuple[str, ...]
     utility_score: float = 0.0
+    attribution: PerformanceAttribution | None = None
+
+
+def _percent_change(baseline: float, candidate_value: float) -> float:
+    if baseline <= 0:
+        return 0.0
+    return ((candidate_value - baseline) / baseline) * 100.0
+
+
+def _attribution(candidate: OptimizationCandidate, result: VerificationResult) -> PerformanceAttribution:
+    confidence = "high" if result.stable and result.decision is not Decision.INCONCLUSIVE else ("medium" if result.stable else "low")
+    return PerformanceAttribution(
+        targeted_issue=candidate.rationale,
+        strategy=candidate.strategy,
+        baseline_wall_seconds=result.baseline.median_seconds,
+        candidate_wall_seconds=result.candidate.median_seconds,
+        wall_change_percent=_percent_change(result.baseline.median_seconds, result.candidate.median_seconds),
+        baseline_cpu_seconds=result.baseline.cpu_mean_seconds,
+        candidate_cpu_seconds=result.candidate.cpu_mean_seconds,
+        cpu_change_percent=result.cpu_change_percent,
+        baseline_peak_memory_bytes=result.baseline.peak_memory_bytes,
+        candidate_peak_memory_bytes=result.candidate.peak_memory_bytes,
+        memory_change_percent=result.memory_change_percent,
+        correctness_passed=result.correctness_passed,
+        stable=result.stable,
+        confidence=confidence,
+        decision=result.decision,
+    )
 
 
 @dataclass(frozen=True)
@@ -364,6 +392,7 @@ def optimize(
                         None,
                         changed_paths,
                         result.utility_score,
+                        _attribution(candidate, result),
                     )
                 )
                 if audit_logger:
@@ -420,7 +449,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=4,
+        schema_version=5,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
