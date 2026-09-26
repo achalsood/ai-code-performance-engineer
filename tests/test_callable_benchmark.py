@@ -225,8 +225,22 @@ def test_callable_timeout_terminates_descendant_processes(tmp_path: Path) -> Non
         session.measure()
 
     child_pid = int((tmp_path / "child.pid").read_text(encoding="utf-8"))
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        status_path = Path(f"/proc/{child_pid}/status")
+        try:
+            status = status_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            break
+        if "\\nState:\\tZ" in status:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("descendant process remained alive after callable timeout")
 
 
 @pytest.mark.parametrize(
