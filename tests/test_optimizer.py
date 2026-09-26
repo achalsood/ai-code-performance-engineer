@@ -63,7 +63,8 @@ def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
         provider=FixedProvider(),
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
-        rounds=3,
+        rounds=5,
+        maximum_rounds=9,
     )
 
     assert result.winner_id == "fast"
