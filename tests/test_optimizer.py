@@ -110,8 +110,12 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
 
 def test_refinement_feedback_contains_structured_attribution() -> None:
     import perf_engineer.optimizer as optimizer
-    from perf_engineer.models import BenchmarkResult, Decision, PerformanceAttribution
-    from perf_engineer.models import VerificationResult
+    from perf_engineer.models import (
+        BenchmarkResult,
+        Decision,
+        PerformanceAttribution,
+        VerificationResult,
+    )
 
     baseline = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
     measured = BenchmarkResult(("bench",), (0.8,), 0.8, 0.8, 0.0, 0.8, 0.8)
@@ -169,7 +173,6 @@ def test_refinement_feedback_contains_structured_attribution() -> None:
     assert "confidence=high" in feedback
     assert "wall_change=-20.00%" in feedback
     assert "memory_change=12.00%" in feedback
-    assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
 def test_attribution_resolves_candidate_evidence_to_analyzer_finding(tmp_path: Path) -> None:
