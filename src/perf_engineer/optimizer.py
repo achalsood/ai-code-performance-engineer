@@ -341,6 +341,7 @@ def optimize(
     maximum_cpu_regression_percent: float = 10.0,
     profile_guidance: bool = True,
     maximum_provider_attempts: int = 2,
+    maximum_optimization_stages: int = 3,
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
@@ -348,6 +349,8 @@ def optimize(
 ) -> OptimizationRun:
     if maximum_provider_attempts < 1:
         raise ValueError("maximum_provider_attempts must be at least 1")
+    if maximum_optimization_stages < 1:
+        raise ValueError("maximum_optimization_stages must be at least 1")
     if (benchmark_command is None) == (benchmark_callable is None):
         raise ValueError("provide exactly one benchmark command or callable")
     repository = repository.resolve()
@@ -376,11 +379,12 @@ def optimize(
     accepted_sequence: list[OptimizationCandidate] = []
     stages: list[OptimizationStage] = []
     original_baseline_seconds: float | None = None
-    provider_attempts = 1
+    provider_attempts = 0
     seen_patches: set[str] = set()
 
-    while True:
+    while len(stages) < maximum_optimization_stages:
         stage_evaluations: list[CandidateEvaluation] = []
+        stage_attempt = 1
         with _worktree(repository, commit) as stage_tree:
             _apply_candidate_sequence(stage_tree, tuple(accepted_sequence))
             stage_profile: ProfileResult | None = None
@@ -398,10 +402,11 @@ def optimize(
             request = _request(repository, stage_tree, maximum_candidates, stage_profile)
             request = replace(
                 request,
-                attempt_number=provider_attempts,
+                attempt_number=stage_attempt,
                 feedback=_candidate_feedback(evaluations),
                 optimization_hints=request.optimization_hints + _refinement_hints(evaluations),
             )
+            provider_attempts += 1
             candidates = provider.generate(request)
 
         fresh_candidates: list[OptimizationCandidate] = []
@@ -414,7 +419,7 @@ def optimize(
             if candidate.candidate_id in used_ids:
                 candidate = replace(
                     candidate,
-                    candidate_id=f"attempt-{provider_attempts}-{candidate.candidate_id}",
+                    candidate_id=f"stage-{len(stages) + 1}-attempt-{stage_attempt}-{candidate.candidate_id}",
                 )
             used_ids.add(candidate.candidate_id)
             fresh_candidates.append(candidate)
@@ -517,13 +522,17 @@ def optimize(
             )
         )
         if not accepted:
-            if provider_attempts >= maximum_provider_attempts:
+            if stage_attempt >= maximum_provider_attempts:
                 break
-            provider_attempts += 1
+            stage_attempt += 1
             if audit_logger:
                 audit_logger.append(
                     "provider_refined",
-                    {"attempt": provider_attempts, "candidate_count": 0},
+                    {
+                        "stage": len(stages) + 1,
+                        "attempt": stage_attempt,
+                        "candidate_count": 0,
+                    },
                 )
             continue
 
@@ -545,9 +554,6 @@ def optimize(
                 changed_paths=selected.changed_paths,
             )
         )
-        if len(stages) >= maximum_provider_attempts:
-            break
-        provider_attempts += 1
         if audit_logger:
             audit_logger.append(
                 "optimization_stage_promoted",
