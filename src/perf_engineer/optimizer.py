@@ -117,6 +117,7 @@ class OptimizationRun:
     provider_attempts: int = 1
     stages: tuple[OptimizationStage, ...] = ()
     composed_patch: str | None = None
+    final_verification: VerificationResult | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -558,18 +559,56 @@ def optimize(
 
     winner = stages[-1].candidate_id if stages else None
     composed_patch: str | None = None
+    final_verification: VerificationResult | None = None
     if accepted_sequence:
-        with _worktree(repository, commit) as final_tree:
-            _apply_candidate_sequence(final_tree, tuple(accepted_sequence))
-            diff = subprocess.run(
-                ["git", "-C", str(final_tree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if diff.returncode:
-                raise RuntimeError(diff.stderr.strip())
-            composed_patch = diff.stdout or None
+        with _worktree(repository, commit) as original_tree:
+            with _worktree(repository, commit) as final_tree:
+                _apply_candidate_sequence(final_tree, tuple(accepted_sequence))
+                final_correctness = run_correctness(
+                    test_command,
+                    cwd=final_tree,
+                    runner=selected_runner,
+                    policy=selected_policy,
+                )
+                if benchmark_callable is not None:
+                    final_baseline, final_candidate = run_paired_callable_benchmarks(
+                        benchmark_callable,
+                        baseline_cwd=original_tree,
+                        candidate_cwd=final_tree,
+                        minimum_rounds=rounds,
+                        maximum_rounds=max(rounds, maximum_rounds),
+                        minimum_improvement_percent=minimum_improvement_percent,
+                        policy=selected_policy,
+                    )
+                else:
+                    assert benchmark_command is not None
+                    final_baseline, final_candidate = run_adaptive_paired_benchmarks(
+                        benchmark_command,
+                        baseline_cwd=original_tree,
+                        candidate_cwd=final_tree,
+                        minimum_rounds=rounds,
+                        maximum_rounds=max(rounds, maximum_rounds),
+                        runner=selected_runner,
+                        policy=selected_policy,
+                    )
+                final_verification = compare(
+                    final_baseline,
+                    final_candidate,
+                    correctness_passed=final_correctness,
+                    minimum_improvement_percent=minimum_improvement_percent,
+                    paired=True,
+                    maximum_memory_regression_percent=maximum_memory_regression_percent,
+                    maximum_cpu_regression_percent=maximum_cpu_regression_percent,
+                )
+                diff = subprocess.run(
+                    ["git", "-C", str(final_tree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if diff.returncode:
+                    raise RuntimeError(diff.stderr.strip())
+                composed_patch = diff.stdout or None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
     if paired_baselines:
@@ -608,6 +647,7 @@ def optimize(
         provider_attempts=provider_attempts,
         stages=tuple(stages),
         composed_patch=composed_patch,
+        final_verification=final_verification,
     )
 
 
