@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import statistics
 import sys
+import tempfile
 from pathlib import Path
 
 from .execution import (
@@ -180,25 +181,45 @@ def _measure_python_script(
         return None
 
     worker = Path(__file__).with_name("_python_benchmark_worker.py")
-    worker_command = [
-        sys.executable,
-        str(worker),
-        "--script",
-        str(script),
-        "--warmups",
-        str(warmups),
-        "--rounds",
-        str(rounds),
-        "--target-seconds",
-        str(target_seconds),
-        "--",
-        *arguments,
-    ]
-    completed = _measure_once(worker_command, cwd, runner, policy)
-    # The execution runner intentionally discards stdout, so persistent worker
-    # transport needs a temporary result file rather than captured process output.
-    return None
+    with tempfile.TemporaryDirectory(prefix="perf-python-benchmark-") as directory:
+        output = Path(directory) / "result.json"
+        worker_command = [
+            sys.executable,
+            str(worker),
+            "--script",
+            str(script),
+            "--warmups",
+            str(warmups),
+            "--rounds",
+            str(rounds),
+            "--target-seconds",
+            str(target_seconds),
+            "--output",
+            str(output),
+            "--",
+            *arguments,
+        ]
+        completed = _measure_once(worker_command, cwd, runner, policy)
+        try:
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            samples = [float(value) for value in payload["samples_seconds"]]
+            cpu_samples = [float(value) for value in payload["cpu_seconds"]]
+            probe = float(payload["probe_seconds"])
+            repetitions = int(payload["repetitions"])
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise BenchmarkError("Python benchmark worker returned invalid results") from exc
 
+    if len(samples) != rounds or len(cpu_samples) != rounds:
+        raise BenchmarkError("Python benchmark worker returned an unexpected sample count")
+    return _summarize(
+        command,
+        samples,
+        cpu_samples,
+        completed.peak_memory_bytes,
+        calibration_probe_seconds=probe,
+        repetitions_per_sample=repetitions,
+        total_measurement_seconds=sum(samples),
+    )
 
 def run_adaptive_paired_benchmarks(
     command: list[str],
