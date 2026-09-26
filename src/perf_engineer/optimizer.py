@@ -412,11 +412,11 @@ def optimize(
                 assert benchmark_command is not None
                 baseline = run_benchmark(
                     benchmark_command,
-                cwd=baseline_tree,
-                rounds=rounds,
-                runner=selected_runner,
-                policy=selected_policy,
-            )
+                    cwd=baseline_tree,
+                    rounds=rounds,
+                    runner=selected_runner,
+                    policy=selected_policy,
+                )
     return OptimizationRun(
         schema_version=4,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
