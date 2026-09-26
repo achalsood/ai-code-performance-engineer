@@ -245,6 +245,71 @@ def run_adaptive_paired_benchmarks(
     selected_policy = policy or ExecutionPolicy()
     directories = {"baseline": baseline_cwd, "candidate": candidate_cwd}
 
+    # Python script benchmarks can keep one interpreter alive for the complete
+    # measurement session. This removes repeated interpreter/process startup
+    # from short-workload samples while preserving isolated baseline/candidate
+    # workers and the existing external-command fallback.
+    if _python_script_target(command) is not None:
+        baseline_python = _measure_python_script(
+            command,
+            baseline_cwd,
+            rounds=maximum_rounds,
+            warmups=warmups,
+            target_seconds=minimum_sample_seconds,
+            runner=selected_runner,
+            policy=selected_policy,
+        )
+        candidate_python = _measure_python_script(
+            command,
+            candidate_cwd,
+            rounds=maximum_rounds,
+            warmups=warmups,
+            target_seconds=minimum_sample_seconds,
+            runner=selected_runner,
+            policy=selected_policy,
+        )
+        if baseline_python is not None and candidate_python is not None:
+            stop_round = maximum_rounds
+            measured_seconds = 0.0
+            for count in range(1, maximum_rounds + 1):
+                measured_seconds += (
+                    baseline_python.samples_seconds[count - 1]
+                    + candidate_python.samples_seconds[count - 1]
+                )
+                if count < minimum_rounds or measured_seconds < minimum_measurement_seconds:
+                    continue
+                effects = [
+                    (before - after) / before * 100 if before else 0.0
+                    for before, after in zip(
+                        baseline_python.samples_seconds[:count],
+                        candidate_python.samples_seconds[:count],
+                        strict=True,
+                    )
+                ]
+                center = statistics.median(effects)
+                mad = statistics.median(abs(effect - center) for effect in effects)
+                confidence_low, _ = _bootstrap_median_interval(effects)
+                if mad <= target_mad_percent and confidence_low > 0.0:
+                    stop_round = count
+                    break
+
+            def trim(result: BenchmarkResult) -> BenchmarkResult:
+                samples = list(result.samples_seconds[:stop_round])
+                # Worker CPU samples are summarized in cpu_mean_seconds only;
+                # preserve that process-time estimate while trimming wall samples.
+                cpu_samples = [result.cpu_mean_seconds] * stop_round
+                return _summarize(
+                    command,
+                    samples,
+                    cpu_samples,
+                    result.peak_memory_bytes,
+                    calibration_probe_seconds=result.calibration_probe_seconds,
+                    repetitions_per_sample=result.repetitions_per_sample,
+                    total_measurement_seconds=sum(samples),
+                )
+
+            return trim(baseline_python), trim(candidate_python)
+
     # Calibrate measurement effort to the current machine. Short commands are
     # repeated within each sample so process/scheduler noise is a smaller share
     # of the measured work; naturally long commands remain single-shot.
