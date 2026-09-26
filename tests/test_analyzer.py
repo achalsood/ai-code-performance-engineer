@@ -41,3 +41,14 @@ def test_detects_membership_in_loop_bound_sequence(tmp_path: Path) -> None:
     source = tmp_path / "slow.py"
     source.write_text("for items in batches:\n    if needle in items:\n        print(needle)\n")
     assert "PERF004" in {finding.rule_id for finding in analyze_file(source)}
+
+
+def test_ignores_membership_in_set_built_from_comprehension(tmp_path: Path) -> None:
+    source = tmp_path / "safe.py"
+    source.write_text(
+        "used_ids = {item.candidate_id for item in candidates}\n"
+        "for candidate in refined:\n"
+        "    if candidate.candidate_id in used_ids:\n"
+        "        print(candidate)\n"
+    )
+    assert "PERF004" not in {finding.rule_id for finding in analyze_file(source)}
