@@ -232,8 +232,8 @@ def test_exhausts_stage_attempts_without_looping(
                 )
             ]
 
-    from perf_engineer.models import BenchmarkResult
     import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult
 
     baseline = BenchmarkResult(
         command=("benchmark",),
