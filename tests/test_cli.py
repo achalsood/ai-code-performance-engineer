@@ -295,3 +295,36 @@ def test_verify_command_returns_rejection_status(tmp_path, monkeypatch, capsys) 
         "--test", "pytest",
     ]) == 2
     assert json.loads(capsys.readouterr().out)["decision"] == "reject"
+
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["benchmark", "python bench.py", "--rounds", "0"], "greater than zero"),
+        (
+            [
+                "fix",
+                "--benchmark", "python bench.py",
+                "--test", "pytest",
+                "--maximum-candidates", "0",
+            ],
+            "greater than zero",
+        ),
+        (
+            [
+                "optimize",
+                "--provider-command", "python provider.py",
+                "--benchmark", "python bench.py",
+                "--test", "pytest",
+                "--minimum-improvement", "-1",
+            ],
+            "zero or greater",
+        ),
+    ],
+)
+def test_cli_rejects_invalid_numeric_arguments(arguments, message, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(arguments)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
