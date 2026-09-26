@@ -1,67 +1,51 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
+import importlib
 import json
-import os
-import runpy
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 
-def _run_script(script: Path, arguments: list[str]) -> None:
-    old_argv = sys.argv
-    sys.argv = [str(script), *arguments]
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            runpy.run_path(str(script), run_name="__main__")
-    finally:
-        sys.argv = old_argv
+def _load_callable(module_name: str, callable_name: str) -> Any:
+    module = importlib.import_module(module_name)
+    target: Any = module
+    for part in callable_name.split("."):
+        target = getattr(target, part)
+    if not callable(target):
+        raise TypeError(f"{module_name}:{callable_name} is not callable")
+    return target
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--script", type=Path, required=True)
-    parser.add_argument("--warmups", type=int, required=True)
-    parser.add_argument("--rounds", type=int, required=True)
-    parser.add_argument("--target-seconds", type=float, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    parser.add_argument("--module", required=True)
+    parser.add_argument("--callable", dest="callable_name", required=True)
+    parser.add_argument("--request", type=Path, required=True)
+    parser.add_argument("--response", type=Path, required=True)
     args = parser.parse_args()
 
-    script = args.script.resolve()
-    if not script.is_file():
-        raise SystemExit(f"benchmark script does not exist: {script}")
+    sys.path.insert(0, str(Path.cwd()))
+    target = _load_callable(args.module, args.callable_name)
 
-    for _ in range(args.warmups):
-        _run_script(script, args.arguments)
-
-    started = time.perf_counter()
-    _run_script(script, args.arguments)
-    probe = time.perf_counter() - started
-    repetitions = max(1, min(10_000, int(args.target_seconds / max(probe, 1e-9) + 0.999999)))
-
-    samples: list[float] = []
-    cpu_samples: list[float] = []
-    for _ in range(args.rounds):
-        wall_started = time.perf_counter()
+    while True:
+        request = json.loads(args.request.read_text(encoding="utf-8"))
+        operation = request["operation"]
+        if operation == "stop":
+            return 0
+        repetitions = int(request.get("repetitions", 1))
+        started = time.perf_counter()
         cpu_started = time.process_time()
         for _ in range(repetitions):
-            _run_script(script, args.arguments)
-        cpu_samples.append(time.process_time() - cpu_started)
-        samples.append(time.perf_counter() - wall_started)
-
-    payload = {
-        "probe_seconds": probe,
-        "repetitions": repetitions,
-        "samples_seconds": samples,
-        "cpu_seconds": cpu_samples,
-        "pid": os.getpid(),
-    }
-    args.output.write_text(json.dumps(payload), encoding="utf-8")
-    return 0
+            target()
+        payload = {
+            "wall_seconds": time.perf_counter() - started,
+            "cpu_seconds": time.process_time() - cpu_started,
+        }
+        args.response.write_text(json.dumps(payload), encoding="utf-8")
+        args.request.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
