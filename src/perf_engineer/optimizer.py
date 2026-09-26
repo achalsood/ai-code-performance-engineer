@@ -382,9 +382,10 @@ def optimize(
     provider_attempts = 0
     seen_patches: set[str] = set()
 
-    while len(stages) < maximum_optimization_stages:
-        stage_evaluations: list[CandidateEvaluation] = []
+    stop_optimization = False
+    while len(stages) < maximum_optimization_stages and not stop_optimization:
         stage_attempt = 1
+        stage_evaluations: list[CandidateEvaluation] = []
         with _worktree(repository, commit) as stage_tree:
             _apply_candidate_sequence(stage_tree, tuple(accepted_sequence))
             stage_profile: ProfileResult | None = None
@@ -523,7 +524,8 @@ def optimize(
         )
         if not accepted:
             if stage_attempt >= maximum_provider_attempts:
-                break
+                stop_optimization = True
+                continue
             stage_attempt += 1
             if audit_logger:
                 audit_logger.append(
