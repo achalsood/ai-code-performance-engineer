@@ -5,19 +5,36 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 ### Added
 
 - Automatic Python baseline profiling that prioritizes repository-owned runtime hotspots in AI
   candidate context, with an opt-out for unsupported or externally profiled workloads.
-- Bounded AI refinement attempts that feed correctness failures, benchmark confidence, speedup,
-  CPU cost, and memory cost back to the provider when no initial candidate is acceptable.
-- Structured candidate strategy, expected-impact, and risk metadata with cross-attempt patch
-  deduplication and identifier collision handling.
+- Bounded measurement-guided provider refinement with correctness, confidence, speedup, CPU, and
+  memory feedback.
+- Structured candidate strategy, expected-impact, and risk metadata.
+- Cumulative multi-stage optimization that promotes the best verified candidate, re-analyzes the
+  resulting state, and generates fresh alternatives for the next stage.
+- Direct original-vs-final correctness and paired performance verification after cumulative
+  optimization.
+- Reproducible original-to-final unified patch export for the accepted optimization sequence.
+- Deterministic optimization-state identities and stage/attempt provenance for candidate
+  evaluations.
 
 ### Changed
 
-- Optimization records use schema version 4 and retain the normalized baseline profile and number
-  of provider attempts used to guide candidate generation.
+- Provider refinement attempts and promoted optimization stages now have independent limits.
+- Patch deduplication is state-aware, allowing the same patch text to be reconsidered when the
+  cumulative source state has changed.
+- Optimization stages record their actual baseline and resulting state identities instead of
+  representing cumulative states as the original Git commit.
+- Performance attribution and refinement feedback are scoped to the state and stage that produced
+  each candidate.
+- PERF004 analysis recognizes invariant sequence membership inside loops while excluding
+  loop-bound containers and known sets.
+- Optimization records use schema version 6 and retain cumulative stages, provider-attempt counts,
+  the composed final patch, and final verification evidence.
 
 ## [1.0.0] - 2026-09-03
 
@@ -46,5 +63,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hotspot-guided prompts, adaptive paired benchmarking, resource regression budgets, and
   conservative multi-objective candidate ranking.
 
+[1.1.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.1.0
 [1.0.0]: https://github.com/achalsood/ai-code-performance-engineer/releases/tag/v1.0.0
-[Unreleased]: https://github.com/achalsood/ai-code-performance-engineer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/achalsood/ai-code-performance-engineer/compare/v1.1.0...HEAD
