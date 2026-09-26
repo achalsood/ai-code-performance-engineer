@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from perf_engineer.providers import CommandProvider, OptimizationRequest, ProviderError
+from perf_engineer.providers import CommandProvider, OptimizationRequest, ProviderError, _system_prompt
 
 
 def request() -> OptimizationRequest:
@@ -84,3 +84,12 @@ def test_command_provider_reports_timeout() -> None:
     command = [sys.executable, "-c", "import time; time.sleep(1)"]
     with pytest.raises(ProviderError, match="provider timed out"):
         CommandProvider(command, timeout=0.01).generate(request())
+
+
+def test_system_prompt_uses_attribution_to_change_refinement_strategy() -> None:
+    prompt = _system_prompt(3)
+
+    assert "measured attribution as experimental evidence" in prompt
+    assert "Do not repeat a rejected strategy against the same evidence" in prompt
+    assert "improved wall time but regressed CPU or memory" in prompt
+    assert "different strategy for the same hotspot after a high-confidence rejection" in prompt
