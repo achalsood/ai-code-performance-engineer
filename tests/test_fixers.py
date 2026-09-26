@@ -1062,3 +1062,45 @@ def test_rewrite_specs_allow_independent_transforms() -> None:
     )
 
     assert fixers._specs_are_compatible((membership, hoist))
+
+
+
+def test_deterministic_provider_prioritizes_stronger_analyzer_evidence() -> None:
+    source = """def optimize_both():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004", "example.py", 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF002", "example.py", 10, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+            Finding(
+                "PERF002", "example.py", 10, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=1,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert len(candidates) == 1
+    assert candidates[0].strategy == "hoist-invariant-work"
