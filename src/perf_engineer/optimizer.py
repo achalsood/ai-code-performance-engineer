@@ -37,6 +37,17 @@ class CandidateEvaluation:
     attribution: PerformanceAttribution | None = None
 
 
+@dataclass(frozen=True)
+class OptimizationStage:
+    stage_number: int
+    candidate_id: str
+    baseline_commit: str
+    resulting_commit: str
+    incremental_speedup_percent: float
+    cumulative_speedup_percent: float
+    changed_paths: tuple[str, ...]
+
+
 def _percent_change(baseline: float, candidate_value: float) -> float:
     if baseline <= 0:
         return 0.0
@@ -104,9 +115,28 @@ class OptimizationRun:
     environment: dict[str, str | int | None] | None = None
     baseline_profile: ProfileResult | None = None
     provider_attempts: int = 1
+    stages: tuple[OptimizationStage, ...] = ()
+    composed_patch: str | None = None
+    final_verification: VerificationResult | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _apply_candidate_sequence(
+    worktree: Path,
+    candidates: tuple[OptimizationCandidate, ...],
+) -> tuple[str, ...]:
+    changed_paths: list[str] = []
+    for candidate in candidates:
+        changed_paths.extend(apply_patch(worktree, candidate.patch))
+    return tuple(dict.fromkeys(changed_paths))
+
+
+def _cumulative_speedup_percent(original_seconds: float, current_seconds: float) -> float:
+    if original_seconds <= 0:
+        return 0.0
+    return ((original_seconds - current_seconds) / original_seconds) * 100.0
 
 
 def _git(repository: Path, *arguments: str) -> None:
@@ -311,6 +341,7 @@ def optimize(
     maximum_cpu_regression_percent: float = 10.0,
     profile_guidance: bool = True,
     maximum_provider_attempts: int = 2,
+    maximum_optimization_stages: int = 3,
     runner: CommandRunner | None = None,
     policy: ExecutionPolicy | None = None,
     audit_logger: AuditLogger | None = None,
@@ -318,6 +349,8 @@ def optimize(
 ) -> OptimizationRun:
     if maximum_provider_attempts < 1:
         raise ValueError("maximum_provider_attempts must be at least 1")
+    if maximum_optimization_stages < 1:
+        raise ValueError("maximum_optimization_stages must be at least 1")
     if (benchmark_command is None) == (benchmark_callable is None):
         raise ValueError("provide exactly one benchmark command or callable")
     repository = repository.resolve()
@@ -340,29 +373,51 @@ def optimize(
             except ProfilingError:
                 baseline_profile = None
         request = _request(repository, baseline_tree, maximum_candidates, baseline_profile)
-        candidates = provider.generate(request)
 
     evaluations: list[CandidateEvaluation] = []
     paired_baselines: list[BenchmarkResult] = []
-    provider_attempts = 1
-    candidate_index = 0
-    seen_patches = {hashlib.sha256(item.patch.encode()).hexdigest() for item in candidates}
-    while candidate_index < len(candidates) or provider_attempts < maximum_provider_attempts:
-        if candidate_index >= len(candidates):
-            if any(item.result and item.result.decision is Decision.ACCEPT for item in evaluations):
-                break
-            provider_attempts += 1
-            refinement_hints = _refinement_hints(evaluations)
-            refined_request = replace(
-                request,
-                attempt_number=provider_attempts,
-                feedback=_candidate_feedback(evaluations),
-                optimization_hints=request.optimization_hints + refinement_hints,
-            )
-            refined = provider.generate(refined_request)
-            additions: list[OptimizationCandidate] = []
-            used_ids = {item.candidate_id for item in candidates}
-            for candidate in refined:
+    accepted_sequence: list[OptimizationCandidate] = []
+    stages: list[OptimizationStage] = []
+    original_baseline_seconds: float | None = None
+    provider_attempts = 0
+    seen_patches: set[str] = set()
+
+    for stage_number in range(1, maximum_optimization_stages + 1):
+        stage_evaluations: list[CandidateEvaluation] = []
+        promoted = False
+
+        for stage_attempt in range(1, maximum_provider_attempts + 1):
+            with _worktree(repository, commit) as stage_tree:
+                _apply_candidate_sequence(stage_tree, tuple(accepted_sequence))
+                stage_profile: ProfileResult | None = None
+                if (
+                    profile_guidance
+                    and benchmark_command is not None
+                    and "python" in Path(benchmark_command[0]).name.lower()
+                ):
+                    try:
+                        stage_profile = CProfileAdapter(maximum_hotspots=20).profile(
+                            benchmark_command,
+                            cwd=stage_tree,
+                            policy=selected_policy,
+                        )
+                    except ProfilingError:
+                        stage_profile = None
+                request = _request(repository, stage_tree, maximum_candidates, stage_profile)
+                request = replace(
+                    request,
+                    attempt_number=stage_attempt,
+                    feedback=_candidate_feedback(stage_evaluations),
+                    optimization_hints=(
+                        request.optimization_hints + _refinement_hints(stage_evaluations)
+                    ),
+                )
+                provider_attempts += 1
+                candidates = provider.generate(request)
+
+            fresh_candidates: list[OptimizationCandidate] = []
+            used_ids = {item.candidate.candidate_id for item in evaluations}
+            for candidate in candidates:
                 patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
                 if patch_hash in seen_patches:
                     continue
@@ -370,121 +425,236 @@ def optimize(
                 if candidate.candidate_id in used_ids:
                     candidate = replace(
                         candidate,
-                        candidate_id=f"attempt-{provider_attempts}-{candidate.candidate_id}",
+                        candidate_id=(
+                            f"stage-{stage_number}-attempt-{stage_attempt}-"
+                            f"{candidate.candidate_id}"
+                        ),
                     )
                 used_ids.add(candidate.candidate_id)
-                additions.append(candidate)
-            candidates.extend(additions)
-            if not additions:
+                fresh_candidates.append(candidate)
+
+            # A provider that has no new hypothesis for the current promoted
+            # state has exhausted this stage; retrying identical input cannot
+            # create useful refinement feedback.
+            if not fresh_candidates:
                 break
-            if audit_logger:
-                audit_logger.append(
-                    "provider_refined",
-                    {"attempt": provider_attempts, "candidate_count": len(additions)},
-                )
-            continue
-        candidate = candidates[candidate_index]
-        candidate_index += 1
-        try:
-            with _worktree(repository, commit) as baseline_tree:
-                with _worktree(repository, commit) as candidate_tree:
-                    changed_paths = apply_patch(candidate_tree, candidate.patch)
-                    correctness = run_correctness(
-                        test_command,
-                        cwd=candidate_tree,
-                        runner=selected_runner,
-                        policy=selected_policy,
-                    )
-                    if not correctness:
-                        evaluations.append(
-                            CandidateEvaluation(
-                                candidate,
-                                Decision.REJECT.value,
-                                None,
-                                "candidate failed the correctness command",
-                                changed_paths,
-                                0.0,
+
+            attempt_evaluations: list[CandidateEvaluation] = []
+            for candidate in fresh_candidates:
+                try:
+                    with _worktree(repository, commit) as baseline_tree:
+                        with _worktree(repository, commit) as candidate_tree:
+                            _apply_candidate_sequence(
+                                baseline_tree, tuple(accepted_sequence)
                             )
+                            _apply_candidate_sequence(
+                                candidate_tree, tuple(accepted_sequence)
+                            )
+                            changed_paths = apply_patch(candidate_tree, candidate.patch)
+                            correctness = run_correctness(
+                                test_command,
+                                cwd=candidate_tree,
+                                runner=selected_runner,
+                                policy=selected_policy,
+                            )
+                            if not correctness:
+                                evaluation = CandidateEvaluation(
+                                    candidate,
+                                    Decision.REJECT.value,
+                                    None,
+                                    "candidate failed the correctness command",
+                                    changed_paths,
+                                    0.0,
+                                )
+                                evaluations.append(evaluation)
+                                stage_evaluations.append(evaluation)
+                                attempt_evaluations.append(evaluation)
+                                continue
+                            if benchmark_callable is not None:
+                                baseline, measured = run_paired_callable_benchmarks(
+                                    benchmark_callable,
+                                    baseline_cwd=baseline_tree,
+                                    candidate_cwd=candidate_tree,
+                                    minimum_rounds=rounds,
+                                    maximum_rounds=max(rounds, maximum_rounds),
+                                    minimum_improvement_percent=(
+                                        minimum_improvement_percent
+                                    ),
+                                    policy=selected_policy,
+                                )
+                            else:
+                                assert benchmark_command is not None
+                                baseline, measured = run_adaptive_paired_benchmarks(
+                                    benchmark_command,
+                                    baseline_cwd=baseline_tree,
+                                    candidate_cwd=candidate_tree,
+                                    minimum_rounds=rounds,
+                                    maximum_rounds=max(rounds, maximum_rounds),
+                                    runner=selected_runner,
+                                    policy=selected_policy,
+                                )
+                        paired_baselines.append(baseline)
+                        if original_baseline_seconds is None:
+                            original_baseline_seconds = baseline.median_seconds
+                        result = compare(
+                            baseline,
+                            measured,
+                            correctness_passed=correctness,
+                            minimum_improvement_percent=minimum_improvement_percent,
+                            paired=True,
+                            maximum_memory_regression_percent=(
+                                maximum_memory_regression_percent
+                            ),
+                            maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                         )
+                        evaluation = CandidateEvaluation(
+                            candidate,
+                            result.decision.value,
+                            result,
+                            None,
+                            changed_paths,
+                            result.utility_score,
+                            _attribution(candidate, result, request),
+                        )
+                        evaluations.append(evaluation)
+                        stage_evaluations.append(evaluation)
+                        attempt_evaluations.append(evaluation)
                         if audit_logger:
                             audit_logger.append(
                                 "candidate_evaluated",
                                 {
                                     "candidate_id": candidate.candidate_id,
-                                    "status": Decision.REJECT.value,
+                                    "status": result.decision.value,
                                 },
                             )
-                        continue
-                    if benchmark_callable is not None:
-                        baseline, measured = run_paired_callable_benchmarks(
-                            benchmark_callable,
-                            baseline_cwd=baseline_tree,
-                            candidate_cwd=candidate_tree,
-                            minimum_rounds=rounds,
-                            maximum_rounds=max(rounds, maximum_rounds),
-                            minimum_improvement_percent=minimum_improvement_percent,
-                            policy=selected_policy,
-                        )
-                    else:
-                        assert benchmark_command is not None
-                        baseline, measured = run_adaptive_paired_benchmarks(
-                            benchmark_command,
-                            baseline_cwd=baseline_tree,
-                            candidate_cwd=candidate_tree,
-                            minimum_rounds=rounds,
-                            maximum_rounds=max(rounds, maximum_rounds),
-                            runner=selected_runner,
-                            policy=selected_policy,
-                        )
-                paired_baselines.append(baseline)
-                result = compare(
-                    baseline,
-                    measured,
-                    correctness_passed=correctness,
+                except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
+                    evaluation = CandidateEvaluation(
+                        candidate, "invalid", None, str(exc), (), 0.0
+                    )
+                    evaluations.append(evaluation)
+                    stage_evaluations.append(evaluation)
+                    attempt_evaluations.append(evaluation)
+
+            accepted = [
+                item
+                for item in attempt_evaluations
+                if item.result and item.result.decision is Decision.ACCEPT
+            ]
+            accepted.sort(
+                key=lambda item: (
+                    -item.utility_score,
+                    -item.result.speedup_ci95_low if item.result else 0.0,
+                    item.result.candidate.peak_memory_bytes if item.result else 0,
+                    item.candidate.candidate_id,
+                )
+            )
+            if not accepted:
+                if stage_attempt < maximum_provider_attempts and audit_logger:
+                    audit_logger.append(
+                        "provider_refined",
+                        {
+                            "stage": stage_number,
+                            "attempt": stage_attempt + 1,
+                            "candidate_count": len(fresh_candidates),
+                        },
+                    )
+                continue
+
+            selected = accepted[0]
+            assert selected.result is not None
+            accepted_sequence.append(selected.candidate)
+            assert original_baseline_seconds is not None
+            stages.append(
+                OptimizationStage(
+                    stage_number=stage_number,
+                    candidate_id=selected.candidate.candidate_id,
+                    baseline_commit=commit,
+                    resulting_commit=commit,
+                    incremental_speedup_percent=selected.result.speedup_percent,
+                    cumulative_speedup_percent=_cumulative_speedup_percent(
+                        original_baseline_seconds,
+                        selected.result.candidate.median_seconds,
+                    ),
+                    changed_paths=selected.changed_paths,
+                )
+            )
+            if audit_logger:
+                audit_logger.append(
+                    "optimization_stage_promoted",
+                    {
+                        "stage": stage_number,
+                        "candidate_id": selected.candidate.candidate_id,
+                    },
+                )
+            promoted = True
+            break
+
+        if not promoted:
+            break
+
+    winner = stages[-1].candidate_id if stages else None
+    composed_patch: str | None = None
+    final_verification: VerificationResult | None = None
+    if accepted_sequence:
+        with (
+            _worktree(repository, commit) as original_tree,
+            _worktree(repository, commit) as final_tree,
+        ):
+                _apply_candidate_sequence(final_tree, tuple(accepted_sequence))
+                final_correctness = run_correctness(
+                    test_command,
+                    cwd=final_tree,
+                    runner=selected_runner,
+                    policy=selected_policy,
+                )
+                if benchmark_callable is not None:
+                    final_baseline, final_candidate = run_paired_callable_benchmarks(
+                        benchmark_callable,
+                        baseline_cwd=original_tree,
+                        candidate_cwd=final_tree,
+                        minimum_rounds=rounds,
+                        maximum_rounds=max(rounds, maximum_rounds),
+                        minimum_improvement_percent=minimum_improvement_percent,
+                        policy=selected_policy,
+                    )
+                else:
+                    assert benchmark_command is not None
+                    final_baseline, final_candidate = run_adaptive_paired_benchmarks(
+                        benchmark_command,
+                        baseline_cwd=original_tree,
+                        candidate_cwd=final_tree,
+                        minimum_rounds=rounds,
+                        maximum_rounds=max(rounds, maximum_rounds),
+                        runner=selected_runner,
+                        policy=selected_policy,
+                    )
+                final_verification = compare(
+                    final_baseline,
+                    final_candidate,
+                    correctness_passed=final_correctness,
                     minimum_improvement_percent=minimum_improvement_percent,
                     paired=True,
                     maximum_memory_regression_percent=maximum_memory_regression_percent,
                     maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                 )
-                evaluations.append(
-                    CandidateEvaluation(
-                        candidate,
-                        result.decision.value,
-                        result,
-                        None,
-                        changed_paths,
-                        result.utility_score,
-                        _attribution(candidate, result, request),
-                    )
+                diff = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(final_tree),
+                        "diff",
+                        "--no-ext-diff",
+                        "--binary",
+                        "HEAD",
+                        "--",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
-                if audit_logger:
-                    audit_logger.append(
-                        "candidate_evaluated",
-                        {"candidate_id": candidate.candidate_id, "status": result.decision.value},
-                    )
-        except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
-            evaluations.append(CandidateEvaluation(candidate, "invalid", None, str(exc), (), 0.0))
-            if audit_logger:
-                audit_logger.append(
-                    "candidate_invalid", {"candidate_id": candidate.candidate_id, "error": str(exc)}
-                )
-
-    accepted = [
-        item for item in evaluations if item.result and item.result.decision is Decision.ACCEPT
-    ]
-    accepted.sort(
-        key=lambda item: (
-            (
-                -item.utility_score,
-                -item.result.speedup_ci95_low,
-                item.result.candidate.peak_memory_bytes,
-                item.candidate.candidate_id,
-            )
-            if item.result
-            else (0.0, 0.0, 0, "")
-        )
-    )
-    winner = accepted[0].candidate.candidate_id if accepted else None
+                if diff.returncode:
+                    raise RuntimeError(diff.stderr.strip())
+                composed_patch = diff.stdout or None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
     if paired_baselines:
@@ -511,7 +681,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=5,
+        schema_version=6,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -521,6 +691,9 @@ def optimize(
         environment=environment_fingerprint(),
         baseline_profile=baseline_profile,
         provider_attempts=provider_attempts,
+        stages=tuple(stages),
+        composed_patch=composed_patch,
+        final_verification=final_verification,
     )
 
 
@@ -544,11 +717,17 @@ def save_optimization(run: OptimizationRun, output_directory: Path) -> Path:
 
 
 def export_winning_patch(run: OptimizationRun, destination: Path) -> Path | None:
-    winner = next(
-        (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id), None
-    )
-    if winner is None:
+    if not run.winner_id:
+        return None
+    patch = run.composed_patch
+    if patch is None:
+        winner = next(
+            (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id),
+            None,
+        )
+        patch = winner.candidate.patch if winner is not None else None
+    if not patch:
         return None
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(winner.candidate.patch, encoding="utf-8")
+    destination.write_text(patch.rstrip() + "\n", encoding="utf-8")
     return destination
