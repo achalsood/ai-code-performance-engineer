@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import statistics
-import threading
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from .execution import ExecutionPolicy, sanitized_environment
 from .benchmark import _bootstrap_median_interval
+from .execution import ExecutionPolicy, sanitized_environment
 from .models import BenchmarkResult
 
 
