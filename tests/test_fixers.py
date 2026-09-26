@@ -994,7 +994,6 @@ def test_deterministic_provider_explores_partial_combinations_with_budget() -> N
 def test_python_rewrite_plans_deduplicate_equivalent_sources(monkeypatch) -> None:
     import perf_engineer.fixers as fixers
 
-    source = "def work():\n    return 1\n"
     original_apply = fixers._apply_transformers
 
     def duplicate_apply(source_text, specs):
