@@ -129,3 +129,5 @@ def test_adaptive_benchmark_collects_more_evidence_after_transient_outlier(
     assert after.measurement_rounds == before.measurement_rounds
     assert before.median_seconds == pytest.approx(0.10)
     assert after.median_seconds == pytest.approx(0.09)
+
+

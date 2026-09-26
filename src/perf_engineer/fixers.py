@@ -3,7 +3,9 @@ from __future__ import annotations
 import ast
 import difflib
 from dataclasses import dataclass
+from itertools import combinations
 
+from .models import Finding
 from .providers import OptimizationCandidate, OptimizationRequest
 
 
@@ -13,6 +15,25 @@ class _Rewrite:
     rationale: str
     strategy: str
     source: str
+
+
+@dataclass(frozen=True)
+class _RewriteSpec:
+    transformer: type[ast.NodeTransformer]
+    title: str
+    rationale: str
+    strategy: str
+    conflicts: frozenset[str] = frozenset()
+    rule_ids: frozenset[str] = frozenset()
+
+
+def _specs_are_compatible(specs: tuple[_RewriteSpec, ...]) -> bool:
+    strategies = {spec.strategy for spec in specs}
+    return all(not spec.conflicts.intersection(strategies) for spec in specs)
+
+
+def _spec_evidence_score(spec: _RewriteSpec, rule_scores: dict[str, int]) -> int:
+    return sum(rule_scores.get(rule_id, 0) for rule_id in spec.rule_ids)
 
 
 class DeterministicFixProvider:
@@ -25,7 +46,10 @@ class DeterministicFixProvider:
             source = request.files.get(path)
             if source is None or not path.endswith(".py"):
                 continue
-            for rewrite in _rewrite_python_plans(source):
+            path_findings = tuple(
+                finding for finding in request.findings if finding.path == path
+            )
+            for rewrite in _rewrite_python_plans(source, path_findings):
                 if rewrite.source == source:
                     continue
                 normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
@@ -55,44 +79,89 @@ class DeterministicFixProvider:
         return candidates
 
 
-def _rewrite_python_plans(source: str) -> list[_Rewrite]:
-    specs = (
-        (
+def _rewrite_python_plans(
+    source: str, findings: tuple[Finding, ...] = ()
+) -> list[_Rewrite]:
+    specs: tuple[_RewriteSpec, ...] = (
+        _RewriteSpec(
             _MembershipIndexTransformer,
             "Index repeated membership lookups",
             "Builds a set once and reuses it for repeated membership tests inside a loop.",
             "membership-index",
+            rule_ids=frozenset({"PERF004"}),
         ),
-        (
+        _RewriteSpec(
             _LinearCountTransformer,
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
+            rule_ids=frozenset({"PERF003"}),
         ),
-        (
+        _RewriteSpec(
             _InvariantAllocationTransformer,
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
+            rule_ids=frozenset({"PERF002"}),
         ),
-        (
+        _RewriteSpec(
             _BatchedNestedLookupTransformer,
             "Index repeated nested lookup",
             "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
             "nested-loop-index",
+            rule_ids=frozenset({"PERF001"}),
         ),
     )
-    applicable: list[tuple[type[ast.NodeTransformer], str, str, str]] = []
+    rule_scores: dict[str, int] = {}
+    if findings:
+        severity_weight = {"high": 3, "medium": 2, "low": 1}
+        for finding in findings:
+            rule_scores[finding.rule_id] = rule_scores.get(finding.rule_id, 0) + (
+                severity_weight.get(finding.severity, 1)
+            )
+        declaration_order = {spec.strategy: index for index, spec in enumerate(specs)}
+        specs = tuple(
+            sorted(
+                specs,
+                key=lambda spec: (
+                    -_spec_evidence_score(spec, rule_scores),
+                    declaration_order[spec.strategy],
+                ),
+            )
+        )
+
+    applicable: list[_RewriteSpec] = []
     plans: list[_Rewrite] = []
-    for transformer_type, title, rationale, strategy in specs:
-        rewrite = _apply_transformers(source, ((transformer_type, title, rationale, strategy),))
+    seen_sources: set[str] = set()
+    for spec in specs:
+        rewrite = _apply_transformers(source, (spec,))
         if rewrite is not None:
-            applicable.append((transformer_type, title, rationale, strategy))
-            plans.append(rewrite)
-    if len(applicable) > 1:
-        combined = _apply_transformers(source, tuple(applicable))
-        if combined is not None:
-            plans.append(combined)
+            applicable.append(spec)
+            if rewrite.source not in seen_sources:
+                plans.append(rewrite)
+                seen_sources.add(rewrite.source)
+
+    # Explore smaller compatible combinations before larger ones. This keeps the
+    # search useful under a tight candidate budget while correctness and
+    # benchmarking still decide which candidate, if any, is worth keeping.
+    for size in range(2, len(applicable) + 1):
+        groups = [
+            selected
+            for selected in combinations(applicable, size)
+            if _specs_are_compatible(selected)
+        ]
+        order = {spec.strategy: index for index, spec in enumerate(applicable)}
+        groups.sort(
+            key=lambda selected: (
+                -sum(_spec_evidence_score(spec, rule_scores) for spec in selected),
+                tuple(order[spec.strategy] for spec in selected),
+            )
+        )
+        for selected in groups:
+            combined = _apply_transformers(source, selected)
+            if combined is not None and combined.source not in seen_sources:
+                plans.append(combined)
+                seen_sources.add(combined.source)
     return plans
 
 
@@ -103,22 +172,22 @@ def _rewrite_python(source: str) -> _Rewrite | None:
 
 def _apply_transformers(
     source: str,
-    specs: tuple[tuple[type[ast.NodeTransformer], str, str, str], ...],
+    specs: tuple[_RewriteSpec, ...],
 ) -> _Rewrite | None:
     try:
         rewritten: ast.AST = ast.parse(source)
     except SyntaxError:
         return None
     applied: list[_Rewrite] = []
-    for transformer_type, title, rationale, strategy in specs:
-        transformer = transformer_type()
+    for spec in specs:
+        transformer = spec.transformer()
         rewritten = transformer.visit(rewritten)
         if not getattr(transformer, "changed", False):
             continue
         if isinstance(transformer, _LinearCountTransformer):
             _ensure_counter_import(rewritten)
         ast.fix_missing_locations(rewritten)
-        applied.append(_Rewrite(title, rationale, strategy, ""))
+        applied.append(_Rewrite(spec.title, spec.rationale, spec.strategy, ""))
     if not applied:
         return None
     if len(applied) == 1:

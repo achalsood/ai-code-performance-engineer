@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from perf_engineer.callable_benchmark import PythonCallableTarget
 from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
@@ -105,6 +106,59 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert provider.requests[1].attempt_number == 2
     assert "invalid" in provider.requests[1].feedback[0]
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
+
+
+def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "def benchmark():\n"
+        "    total = 0\n"
+        "    for i in range(20000):\n"
+        "        total += i * i\n"
+        "    return total\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class CallableProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,5 +1,2 @@
+ def benchmark():
+-    total = 0
+-    for i in range(20000):
+-        total += i * i
+-    return total
++    return sum(i * i for i in range(2000))
+"""
+            return [OptimizationCandidate("callable-fast", "Faster callable", "Less work", patch)]
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=CallableProvider(),
+        benchmark_command=None,
+        benchmark_callable=PythonCallableTarget("workload", "benchmark"),
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        rounds=3,
+        maximum_rounds=5,
+        profile_guidance=False,
+    )
+
+    assert result.winner_id == "callable-fast"
+    assert result.evaluations[0].status == "accept"
+    assert result.evaluations[0].result is not None
+    assert result.evaluations[0].result.speedup_percent > 5.0
+    assert result.baseline.repetitions_per_sample > 1
+    assert result.evaluations[0].result.candidate.peak_memory_bytes > 0
 
 
 @pytest.mark.performance
@@ -432,3 +486,98 @@ assert len(ranked) == 250
         if evaluation.status == "accept"
     }
     assert result.winner_id in accepted_ids
+
+
+
+def test_optimizer_receives_evidence_ranked_deterministic_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.fixers import DeterministicFixProvider
+    from perf_engineer.models import BenchmarkResult, Decision, Finding, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def optimize_both():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, ranked
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    def fake_analyze(path: Path) -> list[Finding]:
+        workload = path / "workload.py"
+        return [
+            Finding(
+                "PERF004", str(workload), 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF002", str(workload), 11, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ]
+
+    baseline = BenchmarkResult(
+        command=("python", "workload.py"),
+        samples_seconds=(1.0,),
+        median_seconds=1.0,
+        mean_seconds=1.0,
+        stdev_seconds=0.0,
+        min_seconds=1.0,
+        max_seconds=1.0,
+        cpu_mean_seconds=1.0,
+        peak_memory_bytes=1024 * 1024,
+        measurement_rounds=1,
+    )
+
+    def fake_pair(*args, **kwargs):
+        result = VerificationResult(
+            decision=Decision.ACCEPT,
+            speedup_percent=10.0,
+            correctness_passed=True,
+            stable=True,
+            reason="verified",
+            baseline=baseline,
+            candidate=baseline,
+            speedup_ci95_low=10.0,
+            speedup_ci95_high=10.0,
+            memory_change_percent=0.0,
+            cpu_change_percent=0.0,
+        )
+        return baseline, baseline, result
+
+    monkeypatch.setattr(optimizer, "analyze_path", fake_analyze)
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr(optimizer, "run_adaptive_paired_benchmarks", fake_pair)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        maximum_candidates=2,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert [evaluation.candidate.strategy for evaluation in result.evaluations] == [
+        "hoist-invariant-work",
+        "membership-index",
+    ]

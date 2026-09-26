@@ -931,3 +931,227 @@ def test_deterministic_provider_composes_independent_optimizations() -> None:
     assert "_perf_membership_0 = set(values)" in combined.patch
     assert "query in _perf_membership_0" in combined.patch
     assert "_perf_invariant_0 = sorted(ordered_source)" in combined.patch
+
+
+
+def test_deterministic_provider_explores_partial_combinations_with_budget() -> None:
+    source = """def optimize_three():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    items = [1, 2, 1, 3, 2]
+    counts = []
+    for item in items:
+        counts.append(items.count(item))
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, counts, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004", "example.py", 5, "high",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF003", "example.py", 10, "high",
+                ".count() performs a linear scan inside a loop.", "Precompute counts.",
+            ),
+            Finding(
+                "PERF002", "example.py", 16, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=6,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert [candidate.strategy for candidate in candidates] == [
+        "membership-index",
+        "data-structure-index",
+        "hoist-invariant-work",
+        "combined:membership-index+data-structure-index",
+        "combined:membership-index+hoist-invariant-work",
+        "combined:data-structure-index+hoist-invariant-work",
+    ]
+    assert all(
+        candidate.strategy
+        != "combined:membership-index+data-structure-index+hoist-invariant-work"
+        for candidate in candidates
+    )
+
+
+def test_python_rewrite_plans_deduplicate_equivalent_sources(monkeypatch) -> None:
+    import perf_engineer.fixers as fixers
+
+    original_apply = fixers._apply_transformers
+
+    def duplicate_apply(source_text, specs):
+        rewrite = original_apply(source_text, specs)
+        if rewrite is None:
+            return None
+        return fixers._Rewrite(
+            rewrite.title,
+            rewrite.rationale,
+            rewrite.strategy,
+            "def work():\n    return 2\n",
+        )
+
+    monkeypatch.setattr(fixers, "_apply_transformers", duplicate_apply)
+    plans = fixers._rewrite_python_plans(
+        """def work():
+    values = [1, 2, 3]
+    result = []
+    for query in range(5):
+        result.append(query in values)
+    ordered_source = [3, 2, 1]
+    for query in range(2):
+        ordered = sorted(ordered_source)
+    return result
+"""
+    )
+
+    assert len(plans) == 1
+
+
+
+def test_rewrite_specs_reject_declared_conflicts() -> None:
+    import perf_engineer.fixers as fixers
+
+    membership = fixers._RewriteSpec(
+        fixers._MembershipIndexTransformer,
+        "membership",
+        "membership",
+        "membership-index",
+        frozenset({"data-structure-index"}),
+    )
+    counts = fixers._RewriteSpec(
+        fixers._LinearCountTransformer,
+        "counts",
+        "counts",
+        "data-structure-index",
+    )
+
+    assert not fixers._specs_are_compatible((membership, counts))
+
+
+def test_rewrite_specs_allow_independent_transforms() -> None:
+    import perf_engineer.fixers as fixers
+
+    membership = fixers._RewriteSpec(
+        fixers._MembershipIndexTransformer,
+        "membership",
+        "membership",
+        "membership-index",
+    )
+    hoist = fixers._RewriteSpec(
+        fixers._InvariantAllocationTransformer,
+        "hoist",
+        "hoist",
+        "hoist-invariant-work",
+    )
+
+    assert fixers._specs_are_compatible((membership, hoist))
+
+
+
+def test_deterministic_provider_prioritizes_stronger_analyzer_evidence() -> None:
+    source = """def optimize_both():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004", "example.py", 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF002", "example.py", 10, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+            Finding(
+                "PERF002", "example.py", 10, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=1,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert len(candidates) == 1
+    assert candidates[0].strategy == "hoist-invariant-work"
+
+
+
+def test_deterministic_provider_prioritizes_stronger_combination_evidence() -> None:
+    source = """def optimize_three():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    items = [1, 2, 1, 3, 2]
+    counts = []
+    for item in items:
+        counts.append(items.count(item))
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, counts, ranked
+"""
+    request = OptimizationRequest(
+        objective="optimize",
+        language="python",
+        findings=(
+            Finding(
+                "PERF004", "example.py", 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF003", "example.py", 10, "medium",
+                ".count() performs a linear scan inside a loop.", "Precompute counts.",
+            ),
+            Finding(
+                "PERF002", "example.py", 16, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ),
+        files={"example.py": source},
+        maximum_candidates=4,
+    )
+
+    candidates = DeterministicFixProvider().generate(request)
+
+    assert [candidate.strategy for candidate in candidates] == [
+        "hoist-invariant-work",
+        "data-structure-index",
+        "membership-index",
+        "combined:hoist-invariant-work+data-structure-index",
+    ]

@@ -99,6 +99,11 @@ def compare(
         if baseline.cpu_mean_seconds
         else 0.0
     )
+    # CPU time is quantized on some platforms (notably Windows) and becomes
+    # unreliable as a percentage when the baseline consumes only a few timer
+    # ticks. Keep reporting it, but only enforce the regression budget once
+    # there is enough measured CPU work for a meaningful ratio.
+    cpu_budget_is_reliable = baseline.cpu_mean_seconds >= 0.05
     stable = (
         paired_effect_mad(baseline, candidate) <= maximum_paired_mad_percent
         if paired
@@ -111,7 +116,7 @@ def compare(
         decision, reason = Decision.INCONCLUSIVE, "benchmark variance is too high"
     elif memory_change > maximum_memory_regression_percent:
         decision, reason = Decision.REJECT, "candidate exceeds the memory regression budget"
-    elif cpu_change > maximum_cpu_regression_percent:
+    elif cpu_budget_is_reliable and cpu_change > maximum_cpu_regression_percent:
         decision, reason = Decision.REJECT, "candidate exceeds the CPU regression budget"
     elif absolute_improvement < minimum_absolute_improvement_seconds:
         decision, reason = Decision.REJECT, "absolute runtime improvement is too small"

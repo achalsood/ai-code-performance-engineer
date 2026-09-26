@@ -26,14 +26,38 @@ EXCLUDED_DIRECTORIES = {
 }
 
 
+def _bound_names(target: ast.expr) -> set[str]:
+    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+
+
+def _scope_set_names(scope: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Assign) and (
+            isinstance(node.value, (ast.Set, ast.SetComp))
+            or (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "set"
+            )
+        ):
+            names.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+    return names
+
+
 class PerformanceVisitor(ast.NodeVisitor):
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, set_names: set[str]) -> None:
         self.path = path
         self.findings: list[Finding] = []
         self._loop_depth = 0
+        self._loop_bound_names: list[set[str]] = []
+        self._set_names = set_names
 
     def visit_For(self, node: ast.For) -> None:
         self._loop_depth += 1
+        self._loop_bound_names.append(_bound_names(node.target))
         if self._loop_depth >= 2:
             self._add(
                 "PERF001",
@@ -43,10 +67,12 @@ class PerformanceVisitor(ast.NodeVisitor):
                 "Consider indexing lookup data in a set or dictionary.",
             )
         self.generic_visit(node)
+        self._loop_bound_names.pop()
         self._loop_depth -= 1
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
         self._loop_depth += 1
+        self._loop_bound_names.append(_bound_names(node.target))
         if self._loop_depth >= 2:
             self._add(
                 "PERF001",
@@ -56,6 +82,7 @@ class PerformanceVisitor(ast.NodeVisitor):
                 "Consider indexing lookup data in a set or dictionary.",
             )
         self.generic_visit(node)
+        self._loop_bound_names.pop()
         self._loop_depth -= 1
 
     def visit_Compare(self, node: ast.Compare) -> None:
@@ -65,6 +92,8 @@ class PerformanceVisitor(ast.NodeVisitor):
             and isinstance(node.ops[0], (ast.In, ast.NotIn))
             and len(node.comparators) == 1
             and isinstance(node.comparators[0], ast.Name)
+            and node.comparators[0].id in set().union(*self._loop_bound_names)
+            and node.comparators[0].id not in self._set_names
         ):
             self._add(
                 "PERF004",
@@ -119,7 +148,7 @@ def analyze_file(path: Path) -> list[Finding]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (OSError, UnicodeError, SyntaxError):
         return []
-    visitor = PerformanceVisitor(path)
+    visitor = PerformanceVisitor(path, _scope_set_names(tree))
     visitor.visit(tree)
     return visitor.findings
 

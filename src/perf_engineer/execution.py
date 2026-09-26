@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import os
 import subprocess
 import tempfile
@@ -9,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
+
+from . import execution_posix, execution_windows
 
 
 class ExecutionError(RuntimeError):
@@ -60,249 +61,47 @@ def sanitized_environment() -> dict[str, str]:
     return environment
 
 
-def _apply_limits(policy: ExecutionPolicy) -> None:  # pragma: no cover - POSIX only
-    import resource
-
-    resource_api = cast(Any, resource)
-    resource_api.setrlimit(
-        resource_api.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds)
-    )
-    resource_api.setrlimit(
-        resource_api.RLIMIT_NPROC,
-        (policy.maximum_processes, policy.maximum_processes),
-    )
-    resource_api.setrlimit(
-        resource_api.RLIMIT_FSIZE,
-        (policy.maximum_file_bytes, policy.maximum_file_bytes),
-    )
-    resource_api.setrlimit(
-        resource_api.RLIMIT_CORE, (0, 0)
-    )
-
-
 def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
-    if os.name == "posix":  # pragma: no cover - platform-specific
-        return {"start_new_session": True, "preexec_fn": lambda: _apply_limits(policy)}
-    subprocess_api = cast(Any, subprocess)
-    return {"creationflags": subprocess_api.CREATE_NEW_PROCESS_GROUP}
+    if os.name == "posix":
+        return execution_posix.popen_platform_options(policy)
+    return execution_windows.popen_platform_options(policy)
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-    if os.name == "posix":  # pragma: no cover - platform-specific
-        import signal
-
-        with contextlib.suppress(ProcessLookupError):
-            os_api = cast(Any, os)
-            signal_api = cast(Any, signal)
-            os_api.killpg(process.pid, signal_api.SIGKILL)
-        return
-    with contextlib.suppress(ProcessLookupError):
-        process.kill()
+    if os.name == "posix":
+        execution_posix.terminate_process_tree(process)
+    else:
+        execution_windows.terminate_process_tree(process)
 
 
 def _resident_memory_bytes(process_id: int) -> int:
-    if os.name == "nt":  # pragma: no cover - platform-specific
-        import ctypes
-        from ctypes import wintypes
-
-        class ProcessMemoryCounters(ctypes.Structure):
-            _fields_ = [
-                ("cb", wintypes.DWORD),
-                ("PageFaultCount", wintypes.DWORD),
-                ("PeakWorkingSetSize", ctypes.c_ulonglong),
-                ("WorkingSetSize", ctypes.c_ulonglong),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
-                ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
-                ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
-                ("PagefileUsage", ctypes.c_ulonglong),
-                ("PeakPagefileUsage", ctypes.c_ulonglong),
-            ]
-
-        kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
-        psapi = cast(Any, ctypes).WinDLL("psapi", use_last_error=True)
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        psapi.GetProcessMemoryInfo.argtypes = [
-            wintypes.HANDLE,
-            ctypes.POINTER(ProcessMemoryCounters),
-            wintypes.DWORD,
-        ]
-        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-        # PROCESS_QUERY_INFORMATION is required by GetProcessMemoryInfo on
-        # supported Windows versions. PROCESS_VM_READ is not needed here.
-        handle = kernel32.OpenProcess(0x0400, False, process_id)
-        if not handle:
-            return 0
-        try:
-            counters = ProcessMemoryCounters()
-            counters.cb = ctypes.sizeof(counters)
-            if not psapi.GetProcessMemoryInfo(
-                handle, ctypes.byref(counters), counters.cb
-            ):
-                return 0
-            return int(
-                max(
-                    counters.PeakWorkingSetSize,
-                    counters.PeakPagefileUsage,
-                    counters.WorkingSetSize,
-                    counters.PagefileUsage,
-                )
-            )
-        finally:
-            kernel32.CloseHandle(handle)
-    if os.name == "posix":  # pragma: no cover - platform-specific
-        try:
-            for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) * 1024
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            return 0
-    return 0
+    if os.name == "posix":
+        return execution_posix.resident_memory_bytes(process_id)
+    return execution_windows.resident_memory_bytes(process_id)
 
 
-def _resident_working_set_bytes(process_id: int) -> int:
-    """Return current resident memory for a Windows process."""
-    if os.name != "nt":  # pragma: no cover - platform-specific
-        return _resident_memory_bytes(process_id)
+def _process_group_memory_bytes(process_id: int) -> int:
+    if os.name == "posix":
+        return execution_posix.process_group_memory_bytes(process_id)
+    return execution_windows.process_group_memory_bytes(process_id)
 
-    import ctypes
-    from ctypes import wintypes
 
-    class ProcessMemoryCounters(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("PageFaultCount", wintypes.DWORD),
-            ("PeakWorkingSetSize", ctypes.c_ulonglong),
-            ("WorkingSetSize", ctypes.c_ulonglong),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaPeakNonPagedPoolUsage", ctypes.c_ulonglong),
-            ("QuotaNonPagedPoolUsage", ctypes.c_ulonglong),
-            ("PagefileUsage", ctypes.c_ulonglong),
-            ("PeakPagefileUsage", ctypes.c_ulonglong),
-        ]
-
-    kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
-    psapi = cast(Any, ctypes).WinDLL("psapi", use_last_error=True)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    psapi.GetProcessMemoryInfo.argtypes = [
-        wintypes.HANDLE,
-        ctypes.POINTER(ProcessMemoryCounters),
-        wintypes.DWORD,
-    ]
-    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-    handle = kernel32.OpenProcess(0x0400, False, process_id)
-    if not handle:
-        return 0
-    try:
-        counters = ProcessMemoryCounters()
-        counters.cb = ctypes.sizeof(counters)
-        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
-            return 0
-        return int(counters.WorkingSetSize)
-    finally:
-        kernel32.CloseHandle(handle)
+def process_tree_memory_bytes(process_id: int) -> int:
+    """Return the current resident memory of a process tree."""
+    return _process_group_memory_bytes(process_id)
 
 
 def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
-    """Return the live Windows process tree rooted at *root_process_id*."""
-    import ctypes
-    from ctypes import wintypes
-
-    class ProcessEntry32(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.c_size_t),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    kernel32 = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    kernel32.Process32FirstW.argtypes = [
-        wintypes.HANDLE,
-        ctypes.POINTER(ProcessEntry32),
-    ]
-    kernel32.Process32FirstW.restype = wintypes.BOOL
-    kernel32.Process32NextW.argtypes = [
-        wintypes.HANDLE,
-        ctypes.POINTER(ProcessEntry32),
-    ]
-    kernel32.Process32NextW.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-    invalid_handle = ctypes.c_void_p(-1).value
-    if snapshot == invalid_handle:
+    if os.name != "nt":
         return {root_process_id}
-    try:
-        children: dict[int, list[int]] = {}
-        entry = ProcessEntry32()
-        entry.dwSize = ctypes.sizeof(entry)
-        if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
-            while True:
-                children.setdefault(int(entry.th32ParentProcessID), []).append(
-                    int(entry.th32ProcessID)
-                )
-                if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
-                    break
-    finally:
-        kernel32.CloseHandle(snapshot)
-
-    process_ids = {root_process_id}
-    pending = [root_process_id]
-    while pending:
-        parent = pending.pop()
-        for child in children.get(parent, []):
-            if child not in process_ids:
-                process_ids.add(child)
-                pending.append(child)
-    return process_ids
+    return execution_windows.descendant_process_ids(root_process_id)
 
 
-def _process_group_memory_bytes(process_group_id: int) -> int:
-    if os.name == "nt":  # pragma: no cover - platform-specific
-        # Do not sum each process' historical peak: those peaks may have
-        # occurred at different times and can massively overstate concurrent
-        # tree memory. Sample the live working set for the whole tree instead.
-        return sum(
-            _resident_working_set_bytes(process_id)
-            for process_id in _windows_descendant_process_ids(process_group_id)
-        )
-    if os.name == "posix":  # pragma: no cover - platform-specific
-        total = 0
-        try:
-            process_directories = (
-                path for path in Path("/proc").iterdir() if path.name.isdigit()
-            )
-            for process_directory in process_directories:
-                try:
-                    stat = (process_directory / "stat").read_text()
-                    fields = stat[stat.rfind(")") + 2 :].split()
-                    if len(fields) > 2 and int(fields[2]) == process_group_id:
-                        total += _resident_memory_bytes(int(process_directory.name))
-                except (
-                    FileNotFoundError,
-                    PermissionError,
-                    ProcessLookupError,
-                    ValueError,
-                ):
-                    continue
-        except (FileNotFoundError, PermissionError):
-            return 0
-        return total
-    return 0
+def _process_cpu_seconds(process_id: int) -> float:
+    if os.name != "nt":
+        return 0.0
+    return execution_windows.process_cpu_seconds(process_id)
+
 
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
@@ -322,13 +121,26 @@ class LocalProcessRunner:
             deadline = started + policy.timeout_seconds
             stopped = threading.Event()
             monitoring_peak = _process_group_memory_bytes(process.pid)
+            process_cpu_peaks: dict[int, float] = {}
             violation: str | None = None
+
+            def sample_windows_cpu() -> None:
+                if os.name != "nt":
+                    return
+                for process_id in _windows_descendant_process_ids(process.pid):
+                    process_cpu_peaks[process_id] = max(
+                        process_cpu_peaks.get(process_id, 0.0),
+                        _process_cpu_seconds(process_id),
+                    )
+
+            sample_windows_cpu()
 
             def monitor() -> None:
                 nonlocal monitoring_peak, violation
                 while not stopped.wait(0.002):
                     observed = _process_group_memory_bytes(process.pid)
                     monitoring_peak = max(monitoring_peak, observed)
+                    sample_windows_cpu()
                     if monitoring_peak > policy.memory_bytes:
                         violation = "memory"
                     elif time.perf_counter() >= deadline:
@@ -340,17 +152,16 @@ class LocalProcessRunner:
 
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
-            if os.name == "posix":  # pragma: no cover - platform-specific
+            if os.name == "posix":
                 os_api = cast(Any, os)
                 _, status, child_usage = os_api.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(status)
                 cpu_seconds = child_usage.ru_utime + child_usage.ru_stime
-                peak_memory_bytes = max(
-                    monitoring_peak, int(child_usage.ru_maxrss * 1024)
-                )
+                peak_memory_bytes = max(monitoring_peak, int(child_usage.ru_maxrss * 1024))
             else:
                 process.wait()
-                cpu_seconds = 0.0
+                sample_windows_cpu()
+                cpu_seconds = sum(process_cpu_peaks.values())
                 peak_memory_bytes = max(
                     monitoring_peak, _process_group_memory_bytes(process.pid)
                 )
