@@ -48,6 +48,75 @@ def test_fix_parser_uses_local_deterministic_engine(tmp_path) -> None:
     assert args.calibration_summary is False
 
 
+def test_fix_parser_accepts_explicit_callable_benchmark(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "fix",
+            "--repository",
+            str(tmp_path),
+            "--benchmark-callable",
+            "workload:benchmark",
+            "--test",
+            "pytest",
+        ]
+    )
+    assert args.benchmark is None
+    assert args.benchmark_callable.module == "workload"
+    assert args.benchmark_callable.callable_name == "benchmark"
+
+
+def test_optimize_parser_accepts_explicit_callable_benchmark(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "optimize",
+            "--repository",
+            str(tmp_path),
+            "--provider-command",
+            "python provider.py",
+            "--benchmark-callable",
+            "package.workload:benchmark",
+            "--test",
+            "pytest",
+        ]
+    )
+    assert args.benchmark is None
+    assert args.benchmark_callable.module == "package.workload"
+    assert args.benchmark_callable.callable_name == "benchmark"
+
+
+def test_fix_parser_rejects_command_and_callable_benchmarks(tmp_path) -> None:
+    from perf_engineer.cli import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "fix",
+                "--repository",
+                str(tmp_path),
+                "--benchmark",
+                "python workload.py",
+                "--benchmark-callable",
+                "workload:benchmark",
+                "--test",
+                "pytest",
+            ]
+        )
+
+
+@pytest.mark.parametrize("value", ["workload", ":benchmark", "workload:"])
+def test_callable_parser_rejects_invalid_target(value) -> None:
+    import argparse
+
+    from perf_engineer.cli import _python_callable
+
+    with pytest.raises(argparse.ArgumentTypeError, match="MODULE:CALLABLE"):
+        _python_callable(value)
+
+
 def test_calibrate_parser_accepts_adaptive_measurement_options(tmp_path) -> None:
     from perf_engineer.cli import build_parser
 
