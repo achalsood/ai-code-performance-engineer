@@ -7,12 +7,9 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-if os.name == "posix":
-    from . import execution_posix as _platform
-else:
-    from . import execution_windows as _platform
+from . import execution_posix, execution_windows
 
 
 class ExecutionError(RuntimeError):
@@ -65,19 +62,28 @@ def sanitized_environment() -> dict[str, str]:
 
 
 def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
-    return _platform.popen_platform_options(policy)
+    if os.name == "posix":
+        return execution_posix.popen_platform_options(policy)
+    return execution_windows.popen_platform_options(policy)
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-    _platform.terminate_process_tree(process)
+    if os.name == "posix":
+        execution_posix.terminate_process_tree(process)
+    else:
+        execution_windows.terminate_process_tree(process)
 
 
 def _resident_memory_bytes(process_id: int) -> int:
-    return _platform.resident_memory_bytes(process_id)
+    if os.name == "posix":
+        return execution_posix.resident_memory_bytes(process_id)
+    return execution_windows.resident_memory_bytes(process_id)
 
 
 def _process_group_memory_bytes(process_id: int) -> int:
-    return _platform.process_group_memory_bytes(process_id)
+    if os.name == "posix":
+        return execution_posix.process_group_memory_bytes(process_id)
+    return execution_windows.process_group_memory_bytes(process_id)
 
 
 def process_tree_memory_bytes(process_id: int) -> int:
@@ -88,13 +94,13 @@ def process_tree_memory_bytes(process_id: int) -> int:
 def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
     if os.name != "nt":
         return {root_process_id}
-    return _platform.descendant_process_ids(root_process_id)
+    return execution_windows.descendant_process_ids(root_process_id)
 
 
 def _process_cpu_seconds(process_id: int) -> float:
     if os.name != "nt":
         return 0.0
-    return _platform.process_cpu_seconds(process_id)
+    return execution_windows.process_cpu_seconds(process_id)
 
 
 class LocalProcessRunner:
@@ -147,7 +153,8 @@ class LocalProcessRunner:
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
             if os.name == "posix":
-                _, status, child_usage = os.wait4(process.pid, 0)
+                os_api = cast(Any, os)
+                _, status, child_usage = os_api.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(status)
                 cpu_seconds = child_usage.ru_utime + child_usage.ru_stime
                 peak_memory_bytes = max(monitoring_peak, int(child_usage.ru_maxrss * 1024))
