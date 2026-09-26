@@ -2,7 +2,12 @@ import sys
 
 import pytest
 
-from perf_engineer.providers import CommandProvider, OptimizationRequest, ProviderError, _system_prompt
+from perf_engineer.providers import (
+    CommandProvider,
+    OptimizationRequest,
+    ProviderError,
+    _system_prompt,
+)
 
 
 def request() -> OptimizationRequest:
