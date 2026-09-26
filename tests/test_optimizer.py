@@ -432,3 +432,96 @@ assert len(ranked) == 250
         if evaluation.status == "accept"
     }
     assert result.winner_id in accepted_ids
+
+
+
+def test_optimizer_receives_evidence_ranked_deterministic_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.fixers import DeterministicFixProvider
+    from perf_engineer.models import BenchmarkResult, Decision, Finding, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        """def optimize_both():
+    values = list(range(1000))
+    present = []
+    for query in range(2000):
+        present.append(query in values)
+
+    ordered_source = list(range(1000, 0, -1))
+    ranked = []
+    for query in range(20):
+        ordered = sorted(ordered_source)
+        ranked.append((query, ordered[0]))
+    return present, ranked
+"""
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    def fake_analyze(path: Path) -> list[Finding]:
+        workload = path / "workload.py"
+        return [
+            Finding(
+                "PERF004", str(workload), 5, "low",
+                "Linear membership lookup executes inside a loop.", "Precompute a set.",
+            ),
+            Finding(
+                "PERF002", str(workload), 11, "high",
+                "Invariant sorting executes inside a loop.", "Hoist invariant sorting.",
+            ),
+        ]
+
+    baseline = BenchmarkResult(
+        command=("python", "workload.py"),
+        rounds=1,
+        durations_seconds=(1.0,),
+        mean_seconds=1.0,
+        median_seconds=1.0,
+        stdev_seconds=0.0,
+        peak_memory_mb=1.0,
+        cpu_mean_seconds=1.0,
+    )
+
+    def fake_pair(*args, **kwargs):
+        candidate = args[1]
+        result = VerificationResult(
+            decision=Decision.ACCEPT,
+            reason="verified",
+            baseline=baseline,
+            candidate=baseline,
+            speedup_percent=10.0,
+            memory_change_percent=0.0,
+            cpu_change_percent=0.0,
+            correctness_passed=True,
+            speedup_ci95_low=10.0,
+            speedup_ci95_high=10.0,
+        )
+        return baseline, baseline, result
+
+    monkeypatch.setattr(optimizer, "analyze_path", fake_analyze)
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr(optimizer, "run_adaptive_paired_benchmarks", fake_pair)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=DeterministicFixProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        maximum_candidates=2,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert [evaluation.candidate.strategy for evaluation in result.evaluations] == [
+        "hoist-invariant-work",
+        "membership-index",
+    ]
