@@ -78,7 +78,7 @@ class DeterministicFixProvider:
 def _rewrite_python_plans(
     source: str, findings: tuple[Finding, ...] = ()
 ) -> list[_Rewrite]:
-    specs = (
+    specs: tuple[_RewriteSpec, ...] = (
         _RewriteSpec(
             _MembershipIndexTransformer,
             "Index repeated membership lookups",
