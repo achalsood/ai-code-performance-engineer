@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -199,3 +201,29 @@ def test_callable_exception_is_reported_as_target_failure(tmp_path: Path) -> Non
         match="callable benchmark target failed: RuntimeError: benchmark exploded",
     ):
         session.measure()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+def test_callable_timeout_terminates_descendant_processes(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "def benchmark():\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "    Path('child.pid').write_text(str(child.pid), encoding='utf-8')\n"
+        "    time.sleep(30)\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(timeout_seconds=0.1),
+    ) as session, pytest.raises(CallableBenchmarkError, match="timed out"):
+        session.measure()
+
+    child_pid = int((tmp_path / "child.pid").read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
