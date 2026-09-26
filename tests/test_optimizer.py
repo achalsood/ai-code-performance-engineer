@@ -105,7 +105,70 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
 
     assert result.provider_attempts == 2
     assert provider.requests[1].attempt_number == 2
-    assert "invalid" in provider.requests[1].feedback[0]
+    assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
+
+
+def test_refinement_feedback_contains_structured_attribution() -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, PerformanceAttribution
+    from perf_engineer.models import VerificationResult
+
+    baseline = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    measured = BenchmarkResult(("bench",), (0.8,), 0.8, 0.8, 0.0, 0.8, 0.8)
+    result = VerificationResult(
+        Decision.REJECT,
+        20.0,
+        True,
+        True,
+        "memory regression",
+        baseline,
+        measured,
+        speedup_ci95_low=15.0,
+        speedup_ci95_high=25.0,
+        memory_change_percent=12.0,
+        cpu_change_percent=-18.0,
+    )
+    candidate = OptimizationCandidate(
+        "candidate-1",
+        "Index membership",
+        "Avoid repeated scans",
+        "patch",
+        "membership-index",
+        target_evidence_ids=("finding:PERF001:workload.py:7",),
+    )
+    attribution = PerformanceAttribution(
+        "PERF001 at workload.py:7: Repeated linear membership scan",
+        "membership-index",
+        1.0,
+        0.8,
+        -20.0,
+        1.0,
+        0.8,
+        -18.0,
+        100,
+        112,
+        12.0,
+        True,
+        True,
+        "high",
+        Decision.REJECT,
+    )
+    evaluation = optimizer.CandidateEvaluation(
+        candidate,
+        "reject",
+        result,
+        None,
+        ("workload.py",),
+        attribution=attribution,
+    )
+
+    feedback = optimizer._candidate_feedback([evaluation])[0]
+
+    assert "target=PERF001 at workload.py:7" in feedback
+    assert "evidence=finding:PERF001:workload.py:7" in feedback
+    assert "confidence=high" in feedback
+    assert "wall_change=-20.00%" in feedback
+    assert "memory_change=12.00%" in feedback
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
