@@ -1,0 +1,3 @@
+[run]
+omit =
+    src/perf_engineer/execution_windows.py
