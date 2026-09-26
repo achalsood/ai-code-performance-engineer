@@ -43,9 +43,27 @@ def _percent_change(baseline: float, candidate_value: float) -> float:
     return ((candidate_value - baseline) / baseline) * 100.0
 
 
+def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
+    evidence: dict[str, str] = {}
+    for finding in request.findings:
+        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
+        evidence[evidence_id] = (
+            f"{finding.rule_id} at {finding.path}:{finding.line}: {finding.message}"
+        )
+    for hotspot in request.hotspots:
+        evidence_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+        evidence[evidence_id] = (
+            f"hotspot {hotspot.file}:{hotspot.line} {hotspot.function} "
+            f"({hotspot.cumulative_seconds:.6f}s cumulative)"
+        )
+    matched = [evidence[item] for item in candidate.target_evidence_ids if item in evidence]
+    return "; ".join(matched) if matched else candidate.rationale
+
+
 def _attribution(
     candidate: OptimizationCandidate,
     result: VerificationResult,
+    request: OptimizationRequest,
 ) -> PerformanceAttribution:
     confidence = (
         "high"
@@ -53,7 +71,7 @@ def _attribution(
         else ("medium" if result.stable else "low")
     )
     return PerformanceAttribution(
-        targeted_issue=candidate.rationale,
+        targeted_issue=_evidence_label(candidate, request),
         strategy=candidate.strategy,
         baseline_wall_seconds=result.baseline.median_seconds,
         candidate_wall_seconds=result.candidate.median_seconds,
@@ -402,7 +420,7 @@ def optimize(
                         None,
                         changed_paths,
                         result.utility_score,
-                        _attribution(candidate, result),
+                        _attribution(candidate, result, request),
                     )
                 )
                 if audit_logger:
