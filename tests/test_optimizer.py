@@ -174,6 +174,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert second_result.baseline.median_seconds < 0.18
     assert result.winner_id == "second"
     assert [stage.candidate_id for stage in result.stages] == ["first", "second"]
+    assert result.stages[0].baseline_state != result.stages[0].resulting_state
+    assert result.stages[1].baseline_state == result.stages[0].resulting_state
+    assert result.stages[1].resulting_state != result.stages[1].baseline_state
     assert result.stages[1].cumulative_speedup_percent > (
         result.stages[0].cumulative_speedup_percent
     )
