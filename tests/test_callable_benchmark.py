@@ -107,9 +107,8 @@ def test_callable_session_times_out_stalled_work(tmp_path: Path) -> None:
         PythonCallableTarget("workload", "benchmark"),
         cwd=tmp_path,
         policy=ExecutionPolicy(timeout_seconds=0.05),
-    ) as session:
-        with pytest.raises(CallableBenchmarkError, match="timed out"):
-            session.measure()
+    ) as session, pytest.raises(CallableBenchmarkError, match="timed out"):
+        session.measure()
 
 
 def test_paired_callable_keeps_sampling_when_evidence_is_ambiguous(
