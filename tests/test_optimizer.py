@@ -109,6 +109,52 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+def test_attribution_resolves_candidate_evidence_to_analyzer_finding(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, Finding, VerificationResult
+
+    candidate = OptimizationCandidate(
+        "indexed",
+        "Index membership",
+        "Avoid repeated scans",
+        "patch",
+        "membership-index",
+        target_evidence_ids=("finding:PERF001:workload.py:7",),
+    )
+    request = OptimizationRequest(
+        objective="Improve runtime",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "workload.py",
+                7,
+                "high",
+                "Repeated linear membership scan",
+                "Build an index once",
+            ),
+        ),
+        files={},
+        maximum_candidates=1,
+    )
+    benchmark = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    result = VerificationResult(
+        Decision.ACCEPT,
+        10.0,
+        True,
+        True,
+        "verified",
+        benchmark,
+        benchmark,
+    )
+
+    attribution = optimizer._attribution(candidate, result, request)
+
+    assert attribution.targeted_issue == (
+        "PERF001 at workload.py:7: Repeated linear membership scan"
+    )
+
+
 def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
