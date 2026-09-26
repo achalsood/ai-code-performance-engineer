@@ -173,6 +173,14 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
     )
     assert result.stages[1].changed_paths == ("workload.py",)
 
+    exported = export_winning_patch(result, tmp_path / "cumulative.patch")
+    assert exported is not None
+    patch_text = exported.read_text(encoding="utf-8")
+    assert "-time.sleep(0.20)" in patch_text
+    assert "+time.sleep(0.10)" in patch_text
+    assert "-time.sleep(0.10)" in patch_text
+    assert "+time.sleep(0.01)" in patch_text
+
 
 def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
     import perf_engineer.optimizer as optimizer
