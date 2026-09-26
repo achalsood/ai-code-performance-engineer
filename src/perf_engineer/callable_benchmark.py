@@ -5,6 +5,7 @@ import statistics
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,8 +75,8 @@ class PythonCallableSession:
 
         reader = threading.Thread(target=read_response, daemon=True)
         reader.start()
-        deadline = __import__("time").perf_counter() + self._policy.timeout_seconds
-        while reader.is_alive() and __import__("time").perf_counter() < deadline:
+        deadline = time.perf_counter() + self._policy.timeout_seconds
+        while reader.is_alive() and time.perf_counter() < deadline:
             memory_peak = max(memory_peak, process_tree_memory_bytes(self._process.pid))
             if memory_peak > self._policy.memory_bytes:
                 self._process.kill()
