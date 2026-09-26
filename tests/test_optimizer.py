@@ -108,6 +108,47 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (repository / "workload.py").write_text("value = 1\nother = 2\n", encoding="utf-8")
+    first = OptimizationCandidate(
+        "first",
+        "Change value",
+        "First independent optimization",
+        """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,2 +1,2 @@
+-value = 1
++value = 10
+ other = 2
+""",
+    )
+    second = OptimizationCandidate(
+        "second",
+        "Change other",
+        "Second independent optimization",
+        """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,2 +1,2 @@
+ value = 10
+-other = 2
++other = 20
+""",
+    )
+
+    changed = optimizer._apply_candidate_sequence(repository, (first, second))
+
+    assert changed == ("workload.py",)
+    assert (repository / "workload.py").read_text(encoding="utf-8") == (
+        "value = 10\nother = 20\n"
+    )
+
+
 def test_cumulative_speedup_is_measured_from_original_baseline() -> None:
     import perf_engineer.optimizer as optimizer
 
