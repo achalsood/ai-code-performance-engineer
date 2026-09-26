@@ -332,6 +332,7 @@ def optimize(
                             candidate_cwd=candidate_tree,
                             minimum_rounds=rounds,
                             maximum_rounds=max(rounds, maximum_rounds),
+                            minimum_improvement_percent=minimum_improvement_percent,
                             policy=selected_policy,
                         )
                     else:
@@ -406,6 +407,7 @@ def optimize(
                     candidate_cwd=baseline_tree,
                     minimum_rounds=rounds,
                     maximum_rounds=max(rounds, maximum_rounds),
+                            minimum_improvement_percent=minimum_improvement_percent,
                     policy=selected_policy,
                 )
             else:
