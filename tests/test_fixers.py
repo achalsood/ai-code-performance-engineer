@@ -1022,3 +1022,43 @@ def test_python_rewrite_plans_deduplicate_equivalent_sources(monkeypatch) -> Non
     )
 
     assert len(plans) == 1
+
+
+
+def test_rewrite_specs_reject_declared_conflicts() -> None:
+    import perf_engineer.fixers as fixers
+
+    membership = fixers._RewriteSpec(
+        fixers._MembershipIndexTransformer,
+        "membership",
+        "membership",
+        "membership-index",
+        frozenset({"data-structure-index"}),
+    )
+    counts = fixers._RewriteSpec(
+        fixers._LinearCountTransformer,
+        "counts",
+        "counts",
+        "data-structure-index",
+    )
+
+    assert not fixers._specs_are_compatible((membership, counts))
+
+
+def test_rewrite_specs_allow_independent_transforms() -> None:
+    import perf_engineer.fixers as fixers
+
+    membership = fixers._RewriteSpec(
+        fixers._MembershipIndexTransformer,
+        "membership",
+        "membership",
+        "membership-index",
+    )
+    hoist = fixers._RewriteSpec(
+        fixers._InvariantAllocationTransformer,
+        "hoist",
+        "hoist",
+        "hoist-invariant-work",
+    )
+
+    assert fixers._specs_are_compatible((membership, hoist))
