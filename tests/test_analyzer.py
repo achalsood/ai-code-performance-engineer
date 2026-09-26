@@ -39,7 +39,11 @@ def test_ignores_membership_in_invariant_set_inside_loop(tmp_path: Path) -> None
 
 def test_detects_membership_in_invariant_sequence(tmp_path: Path) -> None:
     source = tmp_path / "slow.py"
-    source.write_text("values = list(range(100))\nfor needle in queries:\n    print(needle in values)\n")
+    source.write_text(
+        "values = list(range(100))\n"
+        "for needle in queries:\n"
+        "    print(needle in values)\n"
+    )
     assert "PERF004" in {finding.rule_id for finding in analyze_file(source)}
 
 
