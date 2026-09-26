@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import statistics
+import threading
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from .execution import ExecutionPolicy, sanitized_environment
+from .benchmark import _bootstrap_median_interval
 from .models import BenchmarkResult
 
 
@@ -62,7 +64,20 @@ class PythonCallableSession:
             json.dumps({"operation": "measure", "repetitions": repetitions}) + "\n"
         )
         self._process.stdin.flush()
-        line = self._process.stdout.readline()
+        line_holder: list[str] = []
+
+        def read_response() -> None:
+            if self._process.stdout is not None:
+                line_holder.append(self._process.stdout.readline())
+
+        reader = threading.Thread(target=read_response, daemon=True)
+        reader.start()
+        reader.join(self._policy.timeout_seconds)
+        if reader.is_alive():
+            self._process.kill()
+            self._process.wait()
+            raise CallableBenchmarkError("callable benchmark worker timed out")
+        line = line_holder[0] if line_holder else ""
         if not line:
             raise CallableBenchmarkError(self._worker_error("callable benchmark worker failed"))
         try:
@@ -154,7 +169,8 @@ def run_paired_callable_benchmarks(
             ]
             center = statistics.median(effects)
             mad = statistics.median(abs(effect - center) for effect in effects)
-            if mad <= 1.5:
+            confidence_low, _ = _bootstrap_median_interval(effects)
+            if mad <= 1.5 and confidence_low > 0.0:
                 break
 
     def summarize(name: str) -> BenchmarkResult:
