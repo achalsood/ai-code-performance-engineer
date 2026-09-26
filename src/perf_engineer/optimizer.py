@@ -383,8 +383,8 @@ def optimize(
     seen_patches: set[str] = set()
 
     stop_optimization = False
+    stage_attempt = 1
     while len(stages) < maximum_optimization_stages and not stop_optimization:
-        stage_attempt = 1
         stage_evaluations: list[CandidateEvaluation] = []
         with _worktree(repository, commit) as stage_tree:
             _apply_candidate_sequence(stage_tree, tuple(accepted_sequence))
@@ -541,6 +541,7 @@ def optimize(
         selected = accepted[0]
         assert selected.result is not None
         accepted_sequence.append(selected.candidate)
+        stage_attempt = 1
         assert original_baseline_seconds is not None
         stages.append(
             OptimizationStage(
