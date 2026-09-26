@@ -528,7 +528,7 @@ assert rank_queries([5], [1]) == [(1, 5, 5)]
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "test_correctness.py"],
         rounds=5,
-        maximum_rounds=9,
+        maximum_rounds=21,
         minimum_improvement_percent=5.0,
         profile_guidance=False,
         maximum_provider_attempts=1,
