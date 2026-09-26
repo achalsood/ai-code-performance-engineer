@@ -27,7 +27,9 @@ def popen_platform_options(policy: Any) -> dict[str, Any]:
 
 def terminate_process_tree(process: Any) -> None:
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+        os_api = cast(Any, os)
+        signal_api = cast(Any, signal)
+        os_api.killpg(process.pid, signal_api.SIGKILL)
 
 
 def resident_memory_bytes(process_id: int) -> int:
