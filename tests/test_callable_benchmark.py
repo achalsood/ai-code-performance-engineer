@@ -227,3 +227,25 @@ def test_callable_timeout_terminates_descendant_processes(tmp_path: Path) -> Non
     child_pid = int((tmp_path / "child.pid").read_text(encoding="utf-8"))
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"warmups": -1}, "warmups cannot be negative"),
+        ({"target_sample_seconds": 0.0}, "target sample seconds must be positive"),
+        ({"target_sample_seconds": -0.1}, "target sample seconds must be positive"),
+    ],
+)
+def test_callable_benchmark_rejects_invalid_sampling_inputs(
+    tmp_path: Path,
+    kwargs: dict[str, int | float],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        run_paired_callable_benchmarks(
+            PythonCallableTarget("workload", "benchmark"),
+            baseline_cwd=tmp_path,
+            candidate_cwd=tmp_path,
+            **kwargs,
+        )
