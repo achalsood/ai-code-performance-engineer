@@ -35,6 +35,9 @@ class CandidateEvaluation:
     changed_paths: tuple[str, ...]
     utility_score: float = 0.0
     attribution: PerformanceAttribution | None = None
+    baseline_state: str | None = None
+    stage_number: int | None = None
+    attempt_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -481,6 +484,9 @@ def optimize(
                                     "candidate failed the correctness command",
                                     changed_paths,
                                     0.0,
+                                    baseline_state=baseline_state,
+                                    stage_number=stage_number,
+                                    attempt_number=stage_attempt,
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -531,6 +537,9 @@ def optimize(
                             changed_paths,
                             result.utility_score,
                             _attribution(candidate, result, request),
+                            baseline_state=baseline_state,
+                            stage_number=stage_number,
+                            attempt_number=stage_attempt,
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -545,7 +554,15 @@ def optimize(
                             )
                 except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
                     evaluation = CandidateEvaluation(
-                        candidate, "invalid", None, str(exc), (), 0.0
+                        candidate,
+                        "invalid",
+                        None,
+                        str(exc),
+                        (),
+                        0.0,
+                        baseline_state=baseline_state,
+                        stage_number=stage_number,
+                        attempt_number=stage_attempt,
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
