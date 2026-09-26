@@ -105,8 +105,126 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
 
     assert result.provider_attempts == 2
     assert provider.requests[1].attempt_number == 2
-    assert "invalid" in provider.requests[1].feedback[0]
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
+
+
+def test_refinement_feedback_contains_structured_attribution() -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import (
+        BenchmarkResult,
+        Decision,
+        PerformanceAttribution,
+        VerificationResult,
+    )
+
+    baseline = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    measured = BenchmarkResult(("bench",), (0.8,), 0.8, 0.8, 0.0, 0.8, 0.8)
+    result = VerificationResult(
+        Decision.REJECT,
+        20.0,
+        True,
+        True,
+        "memory regression",
+        baseline,
+        measured,
+        speedup_ci95_low=15.0,
+        speedup_ci95_high=25.0,
+        memory_change_percent=12.0,
+        cpu_change_percent=-18.0,
+    )
+    candidate = OptimizationCandidate(
+        "candidate-1",
+        "Index membership",
+        "Avoid repeated scans",
+        "patch",
+        "membership-index",
+        target_evidence_ids=("finding:PERF001:workload.py:7",),
+    )
+    attribution = PerformanceAttribution(
+        "PERF001 at workload.py:7: Repeated linear membership scan",
+        "membership-index",
+        1.0,
+        0.8,
+        -20.0,
+        1.0,
+        0.8,
+        -18.0,
+        100,
+        112,
+        12.0,
+        True,
+        True,
+        "high",
+        Decision.REJECT,
+    )
+    evaluation = optimizer.CandidateEvaluation(
+        candidate,
+        "reject",
+        result,
+        None,
+        ("workload.py",),
+        attribution=attribution,
+    )
+
+    feedback = optimizer._candidate_feedback([evaluation])[0]
+
+    assert "target=PERF001 at workload.py:7" in feedback
+    assert "evidence=finding:PERF001:workload.py:7" in feedback
+    assert "confidence=high" in feedback
+    assert "wall_change=-20.00%" in feedback
+    assert "memory_change=12.00%" in feedback
+
+    hints = optimizer._refinement_hints([evaluation])
+
+    assert len(hints) == 2
+    assert "Avoid repeating strategy membership-index" in hints[0]
+    assert "preserve the wall-time improvement" in hints[1]
+
+
+def test_attribution_resolves_candidate_evidence_to_analyzer_finding(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, Finding, VerificationResult
+
+    candidate = OptimizationCandidate(
+        "indexed",
+        "Index membership",
+        "Avoid repeated scans",
+        "patch",
+        "membership-index",
+        target_evidence_ids=("finding:PERF001:workload.py:7",),
+    )
+    request = OptimizationRequest(
+        objective="Improve runtime",
+        language="python",
+        findings=(
+            Finding(
+                "PERF001",
+                "workload.py",
+                7,
+                "high",
+                "Repeated linear membership scan",
+                "Build an index once",
+            ),
+        ),
+        files={},
+        maximum_candidates=1,
+    )
+    benchmark = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    result = VerificationResult(
+        Decision.ACCEPT,
+        10.0,
+        True,
+        True,
+        "verified",
+        benchmark,
+        benchmark,
+    )
+
+    attribution = optimizer._attribution(candidate, result, request)
+
+    assert attribution.targeted_issue == (
+        "PERF001 at workload.py:7: Repeated linear membership scan"
+    )
 
 
 def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
@@ -160,6 +278,15 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert result.evaluations[0].result.speedup_percent > 5.0
     assert result.baseline.repetitions_per_sample > 1
     assert result.evaluations[0].result.candidate.peak_memory_bytes > 0
+    attribution = result.evaluations[0].attribution
+    assert attribution is not None
+    assert attribution.targeted_issue == "Less work"
+    assert attribution.strategy == "unspecified"
+    assert attribution.correctness_passed
+    assert attribution.decision.value == "accept"
+    assert attribution.baseline_wall_seconds > attribution.candidate_wall_seconds
+    assert attribution.wall_change_percent < 0
+    assert attribution.confidence in {"medium", "high"}
 
 
 @pytest.mark.performance

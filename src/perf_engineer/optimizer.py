@@ -17,7 +17,7 @@ from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
 from .callable_benchmark import PythonCallableTarget, run_paired_callable_benchmarks
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
-from .models import BenchmarkResult, Decision, VerificationResult
+from .models import BenchmarkResult, Decision, PerformanceAttribution, VerificationResult
 from .patches import PatchValidationError, apply_patch
 from .profiling import CProfileAdapter, ProfileResult, ProfilingError
 from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
@@ -34,6 +34,62 @@ class CandidateEvaluation:
     error: str | None
     changed_paths: tuple[str, ...]
     utility_score: float = 0.0
+    attribution: PerformanceAttribution | None = None
+
+
+def _percent_change(baseline: float, candidate_value: float) -> float:
+    if baseline <= 0:
+        return 0.0
+    return ((candidate_value - baseline) / baseline) * 100.0
+
+
+def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
+    evidence: dict[str, str] = {}
+    for finding in request.findings:
+        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
+        evidence[evidence_id] = (
+            f"{finding.rule_id} at {finding.path}:{finding.line}: {finding.message}"
+        )
+    for hotspot in request.hotspots:
+        evidence_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+        evidence[evidence_id] = (
+            f"hotspot {hotspot.file}:{hotspot.line} {hotspot.function} "
+            f"({hotspot.cumulative_seconds:.6f}s cumulative)"
+        )
+    matched = [evidence[item] for item in candidate.target_evidence_ids if item in evidence]
+    return "; ".join(matched) if matched else candidate.rationale
+
+
+def _attribution(
+    candidate: OptimizationCandidate,
+    result: VerificationResult,
+    request: OptimizationRequest,
+) -> PerformanceAttribution:
+    confidence = (
+        "high"
+        if result.stable and result.decision is not Decision.INCONCLUSIVE
+        else ("medium" if result.stable else "low")
+    )
+    return PerformanceAttribution(
+        targeted_issue=_evidence_label(candidate, request),
+        strategy=candidate.strategy,
+        baseline_wall_seconds=result.baseline.median_seconds,
+        candidate_wall_seconds=result.candidate.median_seconds,
+        wall_change_percent=_percent_change(
+            result.baseline.median_seconds,
+            result.candidate.median_seconds,
+        ),
+        baseline_cpu_seconds=result.baseline.cpu_mean_seconds,
+        candidate_cpu_seconds=result.candidate.cpu_mean_seconds,
+        cpu_change_percent=result.cpu_change_percent,
+        baseline_peak_memory_bytes=result.baseline.peak_memory_bytes,
+        candidate_peak_memory_bytes=result.candidate.peak_memory_bytes,
+        memory_change_percent=result.memory_change_percent,
+        correctness_passed=result.correctness_passed,
+        stable=result.stable,
+        confidence=confidence,
+        decision=result.decision,
+    )
 
 
 @dataclass(frozen=True)
@@ -190,15 +246,20 @@ def _request(
 def _candidate_feedback(evaluations: list[CandidateEvaluation]) -> tuple[str, ...]:
     feedback: list[str] = []
     for evaluation in evaluations:
-        if evaluation.result:
+        attribution = evaluation.attribution
+        if evaluation.result and attribution:
             result = evaluation.result
+            evidence_ids = ", ".join(evaluation.candidate.target_evidence_ids) or "unlinked"
             feedback.append(
-                f"{evaluation.candidate.candidate_id} ({evaluation.candidate.strategy}): "
-                f"{result.decision.value}; {result.reason}; median speedup "
-                f"{result.speedup_percent:.2f}%; CI lower bound "
-                f"{result.speedup_ci95_low:.2f}%; memory change "
-                f"{result.memory_change_percent:.2f}%; CPU change "
-                f"{result.cpu_change_percent:.2f}%."
+                f"{evaluation.candidate.candidate_id} ({attribution.strategy}): "
+                f"target={attribution.targeted_issue}; evidence={evidence_ids}; "
+                f"decision={attribution.decision.value}; confidence={attribution.confidence}; "
+                f"wall_change={attribution.wall_change_percent:.2f}%; "
+                f"speedup_ci95=[{result.speedup_ci95_low:.2f}%, "
+                f"{result.speedup_ci95_high:.2f}%]; "
+                f"memory_change={attribution.memory_change_percent:.2f}%; "
+                f"cpu_change={attribution.cpu_change_percent:.2f}%; "
+                f"reason={result.reason}."
             )
         else:
             feedback.append(
@@ -206,6 +267,33 @@ def _candidate_feedback(evaluations: list[CandidateEvaluation]) -> tuple[str, ..
                 f"{evaluation.status}; {evaluation.error or 'no measurement available'}."
             )
     return tuple(feedback[-20:])
+
+
+def _refinement_hints(evaluations: list[CandidateEvaluation]) -> tuple[str, ...]:
+    hints: list[str] = []
+    for evaluation in evaluations:
+        attribution = evaluation.attribution
+        if not evaluation.result or not attribution:
+            continue
+        evidence_ids = ", ".join(evaluation.candidate.target_evidence_ids) or "unlinked evidence"
+        if attribution.decision is Decision.REJECT and attribution.confidence == "high":
+            hints.append(
+                f"Avoid repeating strategy {attribution.strategy} for {evidence_ids}; "
+                "try a materially different optimization mechanism."
+            )
+        elif attribution.decision is Decision.INCONCLUSIVE or attribution.confidence == "low":
+            hints.append(
+                f"Treat {evidence_ids} as uncertain; prefer a different hypothesis or stronger "
+                "evidence rather than repeating the same patch shape."
+            )
+        if attribution.wall_change_percent < 0 and (
+            attribution.memory_change_percent > 0 or attribution.cpu_change_percent > 0
+        ):
+            hints.append(
+                f"For {evidence_ids}, preserve the wall-time improvement while reducing the "
+                "observed CPU or memory regression."
+            )
+    return tuple(dict.fromkeys(hints))
 
 
 def optimize(
@@ -264,10 +352,12 @@ def optimize(
             if any(item.result and item.result.decision is Decision.ACCEPT for item in evaluations):
                 break
             provider_attempts += 1
+            refinement_hints = _refinement_hints(evaluations)
             refined_request = replace(
                 request,
                 attempt_number=provider_attempts,
                 feedback=_candidate_feedback(evaluations),
+                optimization_hints=request.optimization_hints + refinement_hints,
             )
             refined = provider.generate(refined_request)
             additions: list[OptimizationCandidate] = []
@@ -364,6 +454,7 @@ def optimize(
                         None,
                         changed_paths,
                         result.utility_score,
+                        _attribution(candidate, result, request),
                     )
                 )
                 if audit_logger:
@@ -420,7 +511,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=4,
+        schema_version=5,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,

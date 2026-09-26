@@ -41,6 +41,7 @@ class OptimizationCandidate:
     strategy: str = "unspecified"
     expected_impact: str = ""
     risk: str = ""
+    target_evidence_ids: tuple[str, ...] = ()
 
 
 class CandidateProvider(Protocol):
@@ -89,13 +90,24 @@ def _system_prompt(maximum_candidates: int) -> str:
     return (
         "You are a code performance engineer. Return only JSON with a candidates array. "
         "Each candidate requires candidate_id, title, rationale, strategy, expected_impact, risk, "
-        "and a unified diff in patch. Consider algorithmic complexity, data structures, repeated "
+        "target_evidence_ids, and a unified diff in patch. Consider algorithmic complexity, "
+        "data structures, repeated "
         "work, allocation pressure, serialization, I/O batching, and cache locality. Diversify "
         "candidates across applicable strategies instead of returning minor variants. "
-        "Use the ranked findings and optimization_hints to target measured hot paths. "
-        "Prefer algorithmic or allocation reductions over cosmetic rewrites. Each candidate "
+        "Use finding IDs in the form finding:<rule_id>:<path>:<line> and hotspot IDs in the form "
+        "hotspot:<file>:<line>:<function> in target_evidence_ids so each candidate states the "
+        "evidence it targets. Use the ranked findings and optimization_hints to target measured "
+        "hot paths. Prefer algorithmic or allocation reductions over cosmetic rewrites. "
+        "Each candidate "
         "must isolate one optimization so the benchmark can attribute its effect. If feedback "
-        "from prior attempts is present, diagnose it and produce materially different patches. "
+        "from prior attempts is present, treat measured attribution as experimental evidence. "
+        "Do not repeat a rejected strategy against the same evidence unless the feedback shows "
+        "the failure was inconclusive or caused by correctness rather than performance. If a "
+        "candidate improved wall time but regressed CPU or memory, preserve the useful mechanism "
+        "while changing the implementation to address that regression. If confidence is low or "
+        "the result is inconclusive, form a different hypothesis instead of overfitting noise. "
+        "Prefer a different strategy for the same hotspot after a high-confidence rejection, or "
+        "target the next strongest evidence when the prior hypothesis is exhausted. "
         "Never weaken correctness checks or benchmark workloads. Preserve "
         "observable behavior, modify only existing supported source files, and "
         "produce at most "

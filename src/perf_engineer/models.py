@@ -58,6 +58,25 @@ class VerificationResult:
 
 
 @dataclass(frozen=True)
+class PerformanceAttribution:
+    targeted_issue: str
+    strategy: str
+    baseline_wall_seconds: float
+    candidate_wall_seconds: float
+    wall_change_percent: float
+    baseline_cpu_seconds: float
+    candidate_cpu_seconds: float
+    cpu_change_percent: float
+    baseline_peak_memory_bytes: int
+    candidate_peak_memory_bytes: int
+    memory_change_percent: float
+    correctness_passed: bool
+    stable: bool
+    confidence: str
+    decision: Decision
+
+
+@dataclass(frozen=True)
 class ExperimentRecord:
     schema_version: int
     experiment_id: str
