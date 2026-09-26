@@ -372,6 +372,7 @@ def optimize(
 
     evaluations: list[CandidateEvaluation] = []
     paired_baselines: list[BenchmarkResult] = []
+    accepted_sequence: list[OptimizationCandidate] = []
     provider_attempts = 1
     candidate_index = 0
     seen_patches = {hashlib.sha256(item.patch.encode()).hexdigest() for item in candidates}
@@ -416,7 +417,10 @@ def optimize(
         try:
             with _worktree(repository, commit) as baseline_tree:
                 with _worktree(repository, commit) as candidate_tree:
-                    changed_paths = apply_patch(candidate_tree, candidate.patch)
+                    _apply_candidate_sequence(baseline_tree, tuple(accepted_sequence))
+                    changed_paths = _apply_candidate_sequence(
+                        candidate_tree, tuple(accepted_sequence) + (candidate,)
+                    )
                     correctness = run_correctness(
                         test_command,
                         cwd=candidate_tree,
@@ -485,6 +489,8 @@ def optimize(
                         _attribution(candidate, result, request),
                     )
                 )
+                if result.decision is Decision.ACCEPT:
+                    accepted_sequence.append(candidate)
                 if audit_logger:
                     audit_logger.append(
                         "candidate_evaluated",
