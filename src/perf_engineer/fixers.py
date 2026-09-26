@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import ast
 import difflib
-from itertools import combinations
 from dataclasses import dataclass
+from itertools import combinations
 
 from .providers import OptimizationCandidate, OptimizationRequest
 
