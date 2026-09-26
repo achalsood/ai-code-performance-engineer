@@ -269,6 +269,33 @@ def _candidate_feedback(evaluations: list[CandidateEvaluation]) -> tuple[str, ..
     return tuple(feedback[-20:])
 
 
+def _refinement_hints(evaluations: list[CandidateEvaluation]) -> tuple[str, ...]:
+    hints: list[str] = []
+    for evaluation in evaluations:
+        attribution = evaluation.attribution
+        if not evaluation.result or not attribution:
+            continue
+        evidence_ids = ", ".join(evaluation.candidate.target_evidence_ids) or "unlinked evidence"
+        if attribution.decision is Decision.REJECT and attribution.confidence == "high":
+            hints.append(
+                f"Avoid repeating strategy {attribution.strategy} for {evidence_ids}; "
+                "try a materially different optimization mechanism."
+            )
+        elif attribution.decision is Decision.INCONCLUSIVE or attribution.confidence == "low":
+            hints.append(
+                f"Treat {evidence_ids} as uncertain; prefer a different hypothesis or stronger "
+                "evidence rather than repeating the same patch shape."
+            )
+        if attribution.wall_change_percent < 0 and (
+            attribution.memory_change_percent > 0 or attribution.cpu_change_percent > 0
+        ):
+            hints.append(
+                f"For {evidence_ids}, preserve the wall-time improvement while reducing the "
+                "observed CPU or memory regression."
+            )
+    return tuple(dict.fromkeys(hints))
+
+
 def optimize(
     *,
     repository: Path,
@@ -325,10 +352,12 @@ def optimize(
             if any(item.result and item.result.decision is Decision.ACCEPT for item in evaluations):
                 break
             provider_attempts += 1
+            refinement_hints = _refinement_hints(evaluations)
             refined_request = replace(
                 request,
                 attempt_number=provider_attempts,
                 feedback=_candidate_feedback(evaluations),
+                optimization_hints=request.optimization_hints + refinement_hints,
             )
             refined = provider.generate(refined_request)
             additions: list[OptimizationCandidate] = []
