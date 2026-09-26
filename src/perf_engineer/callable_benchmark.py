@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .benchmark import _bootstrap_median_interval
-from .execution import ExecutionPolicy, sanitized_environment
+from .execution import ExecutionPolicy, process_tree_memory_bytes, sanitized_environment
 from .models import BenchmarkResult
 
 
@@ -27,6 +27,7 @@ class PythonCallableTarget:
 class CallableMeasurement:
     wall_seconds: float
     cpu_seconds: float
+    peak_memory_bytes: int
 
 
 class PythonCallableSession:
@@ -60,6 +61,7 @@ class PythonCallableSession:
             raise CallableBenchmarkError("callable benchmark worker pipes are unavailable")
         if self._process.poll() is not None:
             raise CallableBenchmarkError(self._worker_error("callable benchmark worker exited"))
+        memory_peak = process_tree_memory_bytes(self._process.pid)
         self._process.stdin.write(
             json.dumps({"operation": "measure", "repetitions": repetitions}) + "\n"
         )
@@ -72,7 +74,17 @@ class PythonCallableSession:
 
         reader = threading.Thread(target=read_response, daemon=True)
         reader.start()
-        reader.join(self._policy.timeout_seconds)
+        deadline = __import__("time").perf_counter() + self._policy.timeout_seconds
+        while reader.is_alive() and __import__("time").perf_counter() < deadline:
+            memory_peak = max(memory_peak, process_tree_memory_bytes(self._process.pid))
+            if memory_peak > self._policy.memory_bytes:
+                self._process.kill()
+                self._process.wait()
+                raise CallableBenchmarkError(
+                    f"callable benchmark worker exceeded memory limit of "
+                    f"{self._policy.memory_bytes} bytes"
+                )
+            reader.join(0.002)
         if reader.is_alive():
             self._process.kill()
             self._process.wait()
@@ -85,6 +97,7 @@ class PythonCallableSession:
             return CallableMeasurement(
                 wall_seconds=float(payload["wall_seconds"]),
                 cpu_seconds=float(payload["cpu_seconds"]),
+                peak_memory_bytes=memory_peak,
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise CallableBenchmarkError("callable benchmark worker returned invalid data") from exc
@@ -152,6 +165,7 @@ def run_paired_callable_benchmarks(
         )
         wall: dict[str, list[float]] = {"baseline": [], "candidate": []}
         cpu: dict[str, list[float]] = {"baseline": [], "candidate": []}
+        memory: dict[str, list[int]] = {"baseline": [], "candidate": []}
 
         for round_index in range(maximum_rounds):
             order = ("baseline", "candidate") if round_index % 2 == 0 else ("candidate", "baseline")
@@ -159,6 +173,7 @@ def run_paired_callable_benchmarks(
                 measured = sessions[name].measure(repetitions)
                 wall[name].append(measured.wall_seconds)
                 cpu[name].append(measured.cpu_seconds)
+                memory[name].append(measured.peak_memory_bytes)
 
             count = round_index + 1
             if count < minimum_rounds:
@@ -184,7 +199,7 @@ def run_paired_callable_benchmarks(
             min_seconds=min(samples),
             max_seconds=max(samples),
             cpu_mean_seconds=statistics.fmean(cpu[name]),
-            peak_memory_bytes=0,
+            peak_memory_bytes=max(memory[name]),
             calibration_probe_seconds=probe.wall_seconds,
             repetitions_per_sample=repetitions,
             measurement_rounds=len(samples),
