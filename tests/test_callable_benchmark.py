@@ -161,3 +161,41 @@ def test_callable_session_enforces_memory_limit(tmp_path: Path) -> None:
         policy=ExecutionPolicy(memory_bytes=5_000_000),
     ) as session, pytest.raises(CallableBenchmarkError, match="memory limit"):
         session.measure()
+
+
+def test_callable_output_does_not_corrupt_worker_protocol(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "import sys\n"
+        "def benchmark():\n"
+        "    print('target stdout')\n"
+        "    print('target stderr', file=sys.stderr)\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    ) as session:
+        measurement = session.measure(2)
+
+    assert measurement.wall_seconds > 0.0
+
+
+def test_callable_exception_is_reported_as_target_failure(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "def benchmark():\n"
+        "    raise RuntimeError('benchmark exploded')\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(),
+    ) as session, pytest.raises(
+        CallableBenchmarkError,
+        match="callable benchmark target failed: RuntimeError: benchmark exploded",
+    ):
+        session.measure()
