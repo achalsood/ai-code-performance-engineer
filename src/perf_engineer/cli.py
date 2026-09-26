@@ -41,6 +41,27 @@ def _command(value: str) -> list[str]:
     return command
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
 def _fixture_repository(source: Path) -> tempfile.TemporaryDirectory[str]:
     if not source.is_dir():
         raise ValueError(f"fixture directory does not exist: {source}")
@@ -86,17 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark = subparsers.add_parser("benchmark", help="measure a command")
     benchmark.add_argument("command", type=_command)
     benchmark.add_argument("--cwd", type=Path, default=Path.cwd())
-    benchmark.add_argument("--rounds", type=int, default=7)
-    benchmark.add_argument("--warmups", type=int, default=2)
-    benchmark.add_argument("--timeout", type=float, default=30.0)
+    benchmark.add_argument("--rounds", type=_positive_int, default=7)
+    benchmark.add_argument("--warmups", type=_positive_int, default=2)
+    benchmark.add_argument("--timeout", type=_positive_float, default=30.0)
 
     verify = subparsers.add_parser("verify", help="compare baseline and candidate worktrees")
     verify.add_argument("--baseline", type=Path, required=True)
     verify.add_argument("--candidate", type=Path, required=True)
     verify.add_argument("--benchmark", type=_command, required=True)
     verify.add_argument("--test", type=_command, required=True)
-    verify.add_argument("--rounds", type=int, default=7)
-    verify.add_argument("--minimum-improvement", type=float, default=5.0)
+    verify.add_argument("--rounds", type=_positive_int, default=7)
+    verify.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
 
     calibrate = subparsers.add_parser(
         "calibrate", help="inspect adaptive benchmark calibration between two worktrees"
@@ -104,9 +125,9 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--baseline", type=Path, required=True)
     calibrate.add_argument("--candidate", type=Path, required=True)
     calibrate.add_argument("--benchmark", type=_command, required=True)
-    calibrate.add_argument("--rounds", type=int, default=7)
-    calibrate.add_argument("--maximum-rounds", type=int, default=21)
-    calibrate.add_argument("--warmups", type=int, default=2)
+    calibrate.add_argument("--rounds", type=_positive_int, default=7)
+    calibrate.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    calibrate.add_argument("--warmups", type=_positive_int, default=2)
 
     experiment = subparsers.add_parser(
         "experiment", help="run a reproducible comparison between two Git revisions"
@@ -116,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--candidate-ref", required=True)
     experiment.add_argument("--benchmark", type=_command, required=True)
     experiment.add_argument("--test", type=_command, required=True)
-    experiment.add_argument("--rounds", type=int, default=7)
-    experiment.add_argument("--minimum-improvement", type=float, default=5.0)
+    experiment.add_argument("--rounds", type=_positive_int, default=7)
+    experiment.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
     experiment.add_argument("--output", type=Path, default=Path(".perf-engineer/experiments"))
 
     optimize_parser = subparsers.add_parser(
@@ -132,18 +153,20 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument("--provider-base-url")
     optimize_parser.add_argument("--benchmark", type=_command, required=True)
     optimize_parser.add_argument("--test", type=_command, required=True)
-    optimize_parser.add_argument("--rounds", type=int, default=7)
-    optimize_parser.add_argument("--maximum-rounds", type=int, default=21)
-    optimize_parser.add_argument("--maximum-candidates", type=int, default=3)
-    optimize_parser.add_argument("--minimum-improvement", type=float, default=5.0)
-    optimize_parser.add_argument("--maximum-memory-regression", type=float, default=10.0)
-    optimize_parser.add_argument("--maximum-cpu-regression", type=float, default=10.0)
+    optimize_parser.add_argument("--rounds", type=_positive_int, default=7)
+    optimize_parser.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    optimize_parser.add_argument("--maximum-candidates", type=_positive_int, default=3)
+    optimize_parser.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
+    optimize_parser.add_argument(
+        "--maximum-memory-regression", type=_nonnegative_float, default=10.0
+    )
+    optimize_parser.add_argument("--maximum-cpu-regression", type=_nonnegative_float, default=10.0)
     optimize_parser.add_argument("--profile-guidance", choices=("auto", "off"), default="auto")
-    optimize_parser.add_argument("--maximum-provider-attempts", type=int, default=2)
+    optimize_parser.add_argument("--maximum-provider-attempts", type=_positive_int, default=2)
     optimize_parser.add_argument("--sandbox", choices=("local", "docker"), default="local")
     optimize_parser.add_argument("--docker-image", default="python:3.12-slim")
-    optimize_parser.add_argument("--timeout", type=float, default=30.0)
-    optimize_parser.add_argument("--memory-mb", type=int, default=1024)
+    optimize_parser.add_argument("--timeout", type=_positive_float, default=30.0)
+    optimize_parser.add_argument("--memory-mb", type=_positive_int, default=1024)
     optimize_parser.add_argument(
         "--audit-log", type=Path, default=Path(".perf-engineer/audit.jsonl")
     )
@@ -166,14 +189,14 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--baseline-ref", default="HEAD")
     fix.add_argument("--benchmark", type=_command, required=True)
     fix.add_argument("--test", type=_command, required=True)
-    fix.add_argument("--rounds", type=int, default=7)
-    fix.add_argument("--maximum-rounds", type=int, default=21)
-    fix.add_argument("--maximum-candidates", type=int, default=3)
-    fix.add_argument("--minimum-improvement", type=float, default=5.0)
-    fix.add_argument("--maximum-memory-regression", type=float, default=10.0)
-    fix.add_argument("--maximum-cpu-regression", type=float, default=10.0)
-    fix.add_argument("--timeout", type=float, default=30.0)
-    fix.add_argument("--memory-mb", type=int, default=1024)
+    fix.add_argument("--rounds", type=_positive_int, default=7)
+    fix.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    fix.add_argument("--maximum-candidates", type=_positive_int, default=3)
+    fix.add_argument("--minimum-improvement", type=_nonnegative_float, default=5.0)
+    fix.add_argument("--maximum-memory-regression", type=_nonnegative_float, default=10.0)
+    fix.add_argument("--maximum-cpu-regression", type=_nonnegative_float, default=10.0)
+    fix.add_argument("--timeout", type=_positive_float, default=30.0)
+    fix.add_argument("--memory-mb", type=_positive_int, default=1024)
     fix.add_argument("--output", type=Path, default=Path(".perf-engineer/fixes"))
     fix.add_argument(
         "--output-patch", type=Path, default=Path(".perf-engineer/fix.patch")
@@ -192,308 +215,341 @@ def build_parser() -> argparse.ArgumentParser:
     arena.add_argument("--model")
     arena.add_argument("--provider-base-url")
     arena.add_argument("--provider-label")
-    arena.add_argument("--rounds", type=int, default=7)
-    arena.add_argument("--maximum-rounds", type=int, default=21)
-    arena.add_argument("--maximum-candidates", type=int, default=3)
+    arena.add_argument("--rounds", type=_positive_int, default=7)
+    arena.add_argument("--maximum-rounds", type=_positive_int, default=21)
+    arena.add_argument("--maximum-candidates", type=_positive_int, default=3)
     arena.add_argument("--output", type=Path, default=Path(".perf-engineer/perfarena-agent.json"))
 
     evaluate = subparsers.add_parser("evaluate", help="run a reproducible optimization corpus")
     evaluate.add_argument("--corpus", type=Path, required=True)
-    evaluate.add_argument("--rounds", type=int, default=7)
+    evaluate.add_argument("--rounds", type=_positive_int, default=7)
     evaluate.add_argument("--history", type=Path, default=Path(".perf-engineer/history.jsonl"))
     evaluate.add_argument("--report", type=Path, default=Path(".perf-engineer/report.md"))
-    evaluate.add_argument("--regression-tolerance", type=float, default=5.0)
+    evaluate.add_argument("--regression-tolerance", type=_nonnegative_float, default=5.0)
 
     profile = subparsers.add_parser("profile", help="collect normalized performance profiles")
     profile.add_argument("command", type=_command)
     profile.add_argument("--cwd", type=Path, default=Path.cwd())
     profile.add_argument("--adapter", choices=("resource", "cprofile"), default="resource")
-    profile.add_argument("--timeout", type=float, default=30.0)
-    profile.add_argument("--memory-mb", type=int, default=1024)
+    profile.add_argument("--timeout", type=_positive_float, default=30.0)
+    profile.add_argument("--memory-mb", type=_positive_int, default=1024)
     profile.add_argument("--output", type=Path)
     return parser
+
+
+def _run_analyze(args: argparse.Namespace) -> int:
+    findings = analyze_path(args.path)
+    output_format = "json" if args.json else args.format
+    if output_format == "sarif":
+        rendered = json.dumps(findings_to_sarif(findings), indent=2)
+    elif output_format == "json":
+        rendered = json.dumps([asdict(item) for item in findings], indent=2)
+    else:
+        rendered = "\n".join(
+            f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}"
+            for item in findings
+        )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + ("\n" if rendered else ""), encoding="utf-8")
+    elif rendered:
+        print(rendered)
+    threshold = {"none": 99, "medium": 1, "high": 2}[args.fail_on]
+    severity = {"low": 0, "medium": 1, "high": 2}
+    return 4 if any(severity.get(item.severity, 1) >= threshold for item in findings) else 0
+
+
+def _run_benchmark(args: argparse.Namespace) -> int:
+    benchmark_result = run_benchmark(
+        args.command,
+        cwd=args.cwd,
+        rounds=args.rounds,
+        warmups=args.warmups,
+        timeout=args.timeout,
+    )
+    print(json.dumps(asdict(benchmark_result), indent=2))
+    return 0
+
+
+def _run_calibrate(args: argparse.Namespace) -> int:
+    baseline, candidate = run_adaptive_paired_benchmarks(
+        args.benchmark,
+        baseline_cwd=args.baseline,
+        candidate_cwd=args.candidate,
+        minimum_rounds=args.rounds,
+        maximum_rounds=max(args.rounds, args.maximum_rounds),
+        warmups=args.warmups,
+    )
+    calibration_payload: dict[str, Any] = {
+        "calibration": {
+            "probe_seconds": baseline.calibration_probe_seconds,
+            "repetitions_per_sample": baseline.repetitions_per_sample,
+            "measurement_rounds": baseline.measurement_rounds,
+            "total_measurement_seconds": baseline.total_measurement_seconds,
+        },
+        "baseline": asdict(baseline),
+        "candidate": asdict(candidate),
+    }
+    print(json.dumps(calibration_payload, indent=2))
+    return 0
+
+
+def _run_profile(args: argparse.Namespace) -> int:
+    profiler = CProfileAdapter() if args.adapter == "cprofile" else ResourceProfiler()
+    profile_result = profiler.profile(
+        args.command,
+        cwd=args.cwd,
+        policy=ExecutionPolicy(
+            timeout_seconds=args.timeout,
+            memory_bytes=args.memory_mb * 1024 * 1024,
+        ),
+    )
+    serialized = json.dumps(profile_result.to_dict(), indent=2)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(serialized + "\n", encoding="utf-8")
+    print(serialized)
+    return 0
+
+
+def _run_experiment(args: argparse.Namespace) -> int:
+    record = run_experiment(
+        repository=args.repository,
+        baseline_ref=args.baseline_ref,
+        candidate_ref=args.candidate_ref,
+        benchmark_command=args.benchmark,
+        test_command=args.test,
+        rounds=args.rounds,
+        minimum_improvement_percent=args.minimum_improvement,
+    )
+    destination = save_record(record, args.output)
+    experiment_payload: dict[str, Any] = {
+        **record.to_dict(),
+        "record_path": str(destination),
+    }
+    print(json.dumps(experiment_payload, indent=2))
+    return 0 if record.result.decision == "accept" else 2
+
+
+def _run_optimize(args: argparse.Namespace) -> int:
+    runner = (
+        DockerRunner(args.docker_image)
+        if args.sandbox == "docker"
+        else LocalProcessRunner()
+    )
+    policy = ExecutionPolicy(
+        timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+    )
+    provider: CandidateProvider
+    if args.provider_command:
+        provider = CommandProvider(args.provider_command)
+    elif not args.model:
+        raise ValueError("--model is required with a built-in provider")
+    elif args.provider == "openai":
+        provider = OpenAICompatibleProvider(
+            model=args.model,
+            base_url=args.provider_base_url or "https://api.openai.com/v1",
+        )
+    else:
+        provider = OllamaProvider(
+            model=args.model,
+            base_url=args.provider_base_url or "http://127.0.0.1:11434",
+        )
+    optimization = optimize(
+        repository=args.repository,
+        baseline_ref=args.baseline_ref,
+        provider=provider,
+        benchmark_command=args.benchmark,
+        test_command=args.test,
+        rounds=args.rounds,
+        maximum_candidates=args.maximum_candidates,
+        minimum_improvement_percent=args.minimum_improvement,
+        maximum_rounds=args.maximum_rounds,
+        maximum_memory_regression_percent=args.maximum_memory_regression,
+        maximum_cpu_regression_percent=args.maximum_cpu_regression,
+        profile_guidance=args.profile_guidance == "auto",
+        maximum_provider_attempts=args.maximum_provider_attempts,
+        runner=runner,
+        policy=policy,
+        audit_logger=AuditLogger(args.audit_log),
+    )
+    record_path = save_optimization(optimization, args.output)
+    patch_path = export_winning_patch(optimization, args.output_patch)
+    optimization_payload: dict[str, Any] = {
+        **optimization.to_dict(),
+        "record_path": str(record_path),
+        "winner_patch_path": str(patch_path) if patch_path else None,
+    }
+    print(json.dumps(optimization_payload, indent=2))
+    return 0 if optimization.winner_id else 2
+
+
+def _run_fix(args: argparse.Namespace) -> int:
+    policy = ExecutionPolicy(
+        timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
+    )
+    fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
+    try:
+        optimization = optimize(
+            repository=(
+                Path(fixture_repository.name)
+                if fixture_repository is not None
+                else args.repository
+            ),
+            baseline_ref=args.baseline_ref,
+            provider=DeterministicFixProvider(),
+            benchmark_command=args.benchmark,
+            test_command=args.test,
+            rounds=args.rounds,
+            maximum_candidates=args.maximum_candidates,
+            minimum_improvement_percent=args.minimum_improvement,
+            maximum_rounds=args.maximum_rounds,
+            maximum_memory_regression_percent=args.maximum_memory_regression,
+            maximum_cpu_regression_percent=args.maximum_cpu_regression,
+            profile_guidance=True,
+            maximum_provider_attempts=1,
+            runner=LocalProcessRunner(),
+            policy=policy,
+        )
+    finally:
+        if fixture_repository is not None:
+            fixture_repository.cleanup()
+    record_path = save_optimization(optimization, args.output)
+    patch_path = export_winning_patch(optimization, args.output_patch)
+    fix_payload: dict[str, Any] = {
+        **optimization.to_dict(),
+        "record_path": str(record_path),
+        "winner_patch_path": str(patch_path) if patch_path else None,
+    }
+    print(json.dumps(fix_payload, indent=2))
+    if args.calibration_summary:
+        measured = next(
+            (
+                item.result
+                for item in optimization.evaluations
+                if item.result is not None
+            ),
+            None,
+        )
+        if measured is not None:
+            baseline = measured.baseline
+            print("\nAdaptive benchmark calibration")
+            print(
+                f"Probe duration:          "
+                f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
+            )
+            print(
+                f"Repetitions per sample:  {baseline.repetitions_per_sample}"
+            )
+            print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
+            print(
+                f"Total measured duration: "
+                f"{baseline.total_measurement_seconds or 0.0:.6f} s"
+            )
+            print("\nVerification")
+            print(f"Median speedup:          {measured.speedup_percent:.2f}%")
+            print(
+                f"95% CI:                  "
+                f"[{measured.speedup_ci95_low:.2f}%, "
+                f"{measured.speedup_ci95_high:.2f}%]"
+            )
+            print(f"Decision:                {measured.decision.value.upper()}")
+    return 0 if optimization.winner_id else 2
+
+
+def _run_arena(args: argparse.Namespace) -> int:
+    arena_provider_instance: CandidateProvider
+    if args.provider_command:
+        arena_provider_instance = CommandProvider(args.provider_command)
+        provider_label = args.provider_label or "command-provider"
+    elif not args.model:
+        raise ValueError("--model is required with a built-in provider")
+    elif args.provider == "openai":
+        arena_provider_instance = OpenAICompatibleProvider(
+            model=args.model,
+            base_url=args.provider_base_url or "https://api.openai.com/v1",
+        )
+        provider_label = args.provider_label or f"openai:{args.model}"
+    else:
+        arena_provider_instance = OllamaProvider(
+            model=args.model,
+            base_url=args.provider_base_url or "http://127.0.0.1:11434",
+        )
+        provider_label = args.provider_label or f"ollama:{args.model}"
+    arena_run = run_agent_arena(
+        args.corpus,
+        provider=arena_provider_instance,
+        provider_label=provider_label,
+        rounds=args.rounds,
+        maximum_rounds=args.maximum_rounds,
+        maximum_candidates=args.maximum_candidates,
+    )
+    destination = save_agent_arena(arena_run, args.output)
+    print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
+    return 0
+
+
+def _run_evaluate(args: argparse.Namespace) -> int:
+    previous_runs = read_runs(args.history)
+    evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
+    regressions = (
+        detect_regressions(
+            previous_runs[-1],
+            evaluation,
+            tolerance_percent=args.regression_tolerance,
+        )
+        if previous_runs
+        else []
+    )
+    append_run(args.history, evaluation)
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
+    evaluation_payload: dict[str, Any] = {
+        **evaluation.to_dict(),
+        "regressions": [asdict(item) for item in regressions],
+        "report_path": str(args.report),
+    }
+    print(json.dumps(evaluation_payload, indent=2))
+    return 3 if regressions else 0
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    correctness = run_correctness(args.test, cwd=args.candidate)
+    baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
+    candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
+    verification_result = compare(
+        baseline,
+        candidate,
+        correctness_passed=correctness,
+        minimum_improvement_percent=args.minimum_improvement,
+    )
+    print(json.dumps(verification_result.to_dict(), indent=2))
+    return 0 if verification_result.decision == "accept" else 2
+
+
+COMMAND_HANDLERS = {
+    "analyze": _run_analyze,
+    "benchmark": _run_benchmark,
+    "calibrate": _run_calibrate,
+    "profile": _run_profile,
+    "experiment": _run_experiment,
+    "optimize": _run_optimize,
+    "fix": _run_fix,
+    "arena": _run_arena,
+    "evaluate": _run_evaluate,
+    "verify": _run_verify,
+}
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    handler = COMMAND_HANDLERS[args.action]
+    return handler(args)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.action == "analyze":
-            findings = analyze_path(args.path)
-            output_format = "json" if args.json else args.format
-            if output_format == "sarif":
-                rendered = json.dumps(findings_to_sarif(findings), indent=2)
-            elif output_format == "json":
-                rendered = json.dumps([asdict(item) for item in findings], indent=2)
-            else:
-                rendered = "\n".join(
-                    f"{item.path}:{item.line}: {item.severity} {item.rule_id} {item.message}"
-                    for item in findings
-                )
-            if args.output:
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(rendered + ("\n" if rendered else ""), encoding="utf-8")
-            elif rendered:
-                print(rendered)
-            threshold = {"none": 99, "medium": 1, "high": 2}[args.fail_on]
-            severity = {"low": 0, "medium": 1, "high": 2}
-            return 4 if any(severity.get(item.severity, 1) >= threshold for item in findings) else 0
-        if args.action == "benchmark":
-            benchmark_result = run_benchmark(
-                args.command,
-                cwd=args.cwd,
-                    rounds=args.rounds,
-                warmups=args.warmups,
-                timeout=args.timeout,
-            )
-            print(json.dumps(asdict(benchmark_result), indent=2))
-            return 0
-
-        if args.action == "calibrate":
-            baseline, candidate = run_adaptive_paired_benchmarks(
-                args.benchmark,
-                baseline_cwd=args.baseline,
-                candidate_cwd=args.candidate,
-                minimum_rounds=args.rounds,
-                    maximum_rounds=max(args.rounds, args.maximum_rounds),
-                warmups=args.warmups,
-            )
-            calibration_payload: dict[str, Any] = {
-                "calibration": {
-                    "probe_seconds": baseline.calibration_probe_seconds,
-                    "repetitions_per_sample": baseline.repetitions_per_sample,
-                    "measurement_rounds": baseline.measurement_rounds,
-                    "total_measurement_seconds": baseline.total_measurement_seconds,
-                },
-                "baseline": asdict(baseline),
-                "candidate": asdict(candidate),
-            }
-            print(json.dumps(calibration_payload, indent=2))
-            return 0
-
-        if args.action == "profile":
-            profiler = CProfileAdapter() if args.adapter == "cprofile" else ResourceProfiler()
-            profile_result = profiler.profile(
-                args.command,
-                cwd=args.cwd,
-                    policy=ExecutionPolicy(
-                    timeout_seconds=args.timeout,
-                    memory_bytes=args.memory_mb * 1024 * 1024,
-                ),
-            )
-            serialized = json.dumps(profile_result.to_dict(), indent=2)
-            if args.output:
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(serialized + "\n", encoding="utf-8")
-            print(serialized)
-            return 0
-
-        if args.action == "experiment":
-            record = run_experiment(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                candidate_ref=args.candidate_ref,
-                    benchmark_command=args.benchmark,
-                    test_command=args.test,
-                rounds=args.rounds,
-                    minimum_improvement_percent=args.minimum_improvement,
-            )
-            destination = save_record(record, args.output)
-            experiment_payload: dict[str, Any] = {
-                **record.to_dict(),
-                "record_path": str(destination),
-            }
-            print(json.dumps(experiment_payload, indent=2))
-            return 0 if record.result.decision == "accept" else 2
-
-        if args.action == "optimize":
-            runner = (
-                DockerRunner(args.docker_image)
-                if args.sandbox == "docker"
-                else LocalProcessRunner()
-            )
-            policy = ExecutionPolicy(
-                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
-            )
-            provider: CandidateProvider
-            if args.provider_command:
-                provider = CommandProvider(args.provider_command)
-            elif not args.model:
-                raise ValueError("--model is required with a built-in provider")
-            elif args.provider == "openai":
-                provider = OpenAICompatibleProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "https://api.openai.com/v1",
-                )
-            else:
-                provider = OllamaProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
-                )
-            optimization = optimize(
-                repository=args.repository,
-                baseline_ref=args.baseline_ref,
-                provider=provider,
-                benchmark_command=args.benchmark,
-                test_command=args.test,
-                rounds=args.rounds,
-                    maximum_candidates=args.maximum_candidates,
-                minimum_improvement_percent=args.minimum_improvement,
-                maximum_rounds=args.maximum_rounds,
-                    maximum_memory_regression_percent=args.maximum_memory_regression,
-                    maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                    profile_guidance=args.profile_guidance == "auto",
-                    maximum_provider_attempts=args.maximum_provider_attempts,
-                    runner=runner,
-                policy=policy,
-                audit_logger=AuditLogger(args.audit_log),
-            )
-            record_path = save_optimization(optimization, args.output)
-            patch_path = export_winning_patch(optimization, args.output_patch)
-            optimization_payload: dict[str, Any] = {
-                **optimization.to_dict(),
-                "record_path": str(record_path),
-                "winner_patch_path": str(patch_path) if patch_path else None,
-            }
-            print(json.dumps(optimization_payload, indent=2))
-            return 0 if optimization.winner_id else 2
-
-        if args.action == "fix":
-            policy = ExecutionPolicy(
-                timeout_seconds=args.timeout, memory_bytes=args.memory_mb * 1024 * 1024
-            )
-            fixture_repository = _fixture_repository(args.fixture) if args.fixture else None
-            try:
-                optimization = optimize(
-                    repository=(
-                        Path(fixture_repository.name)
-                        if fixture_repository is not None
-                        else args.repository
-                    ),
-                    baseline_ref=args.baseline_ref,
-                    provider=DeterministicFixProvider(),
-                benchmark_command=args.benchmark,
-                test_command=args.test,
-                rounds=args.rounds,
-                maximum_candidates=args.maximum_candidates,
-                minimum_improvement_percent=args.minimum_improvement,
-                maximum_rounds=args.maximum_rounds,
-                maximum_memory_regression_percent=args.maximum_memory_regression,
-                maximum_cpu_regression_percent=args.maximum_cpu_regression,
-                profile_guidance=True,
-                maximum_provider_attempts=1,
-                runner=LocalProcessRunner(),
-                policy=policy,
-                )
-            finally:
-                if fixture_repository is not None:
-                    fixture_repository.cleanup()
-            record_path = save_optimization(optimization, args.output)
-            patch_path = export_winning_patch(optimization, args.output_patch)
-            fix_payload: dict[str, Any] = {
-                **optimization.to_dict(),
-                "record_path": str(record_path),
-                "winner_patch_path": str(patch_path) if patch_path else None,
-            }
-            print(json.dumps(fix_payload, indent=2))
-            if args.calibration_summary:
-                measured = next(
-                    (
-                        item.result
-                        for item in optimization.evaluations
-                        if item.result is not None
-                    ),
-                    None,
-                )
-                if measured is not None:
-                    baseline = measured.baseline
-                    print("\nAdaptive benchmark calibration")
-                    print(
-                        f"Probe duration:          "
-                        f"{baseline.calibration_probe_seconds or 0.0:.6f} s"
-                    )
-                    print(
-                        f"Repetitions per sample:  {baseline.repetitions_per_sample}"
-                    )
-                    print(f"Measurement rounds:      {baseline.measurement_rounds or 0}")
-                    print(
-                        f"Total measured duration: "
-                        f"{baseline.total_measurement_seconds or 0.0:.6f} s"
-                    )
-                    print("\nVerification")
-                    print(f"Median speedup:          {measured.speedup_percent:.2f}%")
-                    print(
-                        f"95% CI:                  "
-                        f"[{measured.speedup_ci95_low:.2f}%, "
-                        f"{measured.speedup_ci95_high:.2f}%]"
-                    )
-                    print(f"Decision:                {measured.decision.value.upper()}")
-            return 0 if optimization.winner_id else 2
-
-        if args.action == "arena":
-            arena_provider_instance: CandidateProvider
-            if args.provider_command:
-                arena_provider_instance = CommandProvider(args.provider_command)
-                provider_label = args.provider_label or "command-provider"
-            elif not args.model:
-                raise ValueError("--model is required with a built-in provider")
-            elif args.provider == "openai":
-                arena_provider_instance = OpenAICompatibleProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "https://api.openai.com/v1",
-                )
-                provider_label = args.provider_label or f"openai:{args.model}"
-            else:
-                arena_provider_instance = OllamaProvider(
-                    model=args.model,
-                    base_url=args.provider_base_url or "http://127.0.0.1:11434",
-                )
-                provider_label = args.provider_label or f"ollama:{args.model}"
-            arena_run = run_agent_arena(
-                args.corpus,
-                provider=arena_provider_instance,
-                provider_label=provider_label,
-                rounds=args.rounds,
-                maximum_rounds=args.maximum_rounds,
-                maximum_candidates=args.maximum_candidates,
-            )
-            destination = save_agent_arena(arena_run, args.output)
-            print(json.dumps({**arena_run.to_dict(), "record_path": str(destination)}, indent=2))
-            return 0
-
-        if args.action == "evaluate":
-            previous_runs = read_runs(args.history)
-            evaluation = evaluate_corpus(args.corpus, rounds=args.rounds)
-            regressions = (
-                detect_regressions(
-                    previous_runs[-1],
-                    evaluation,
-                    tolerance_percent=args.regression_tolerance,
-                )
-                if previous_runs
-                else []
-            )
-            append_run(args.history, evaluation)
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(markdown_report(evaluation, regressions), encoding="utf-8")
-            evaluation_payload: dict[str, Any] = {
-                **evaluation.to_dict(),
-                "regressions": [asdict(item) for item in regressions],
-                "report_path": str(args.report),
-            }
-            print(json.dumps(evaluation_payload, indent=2))
-            return 3 if regressions else 0
-
-        correctness = run_correctness(args.test, cwd=args.candidate)
-        baseline = run_benchmark(args.benchmark, cwd=args.baseline, rounds=args.rounds)
-        candidate = run_benchmark(args.benchmark, cwd=args.candidate, rounds=args.rounds)
-        verification_result = compare(
-            baseline,
-            candidate,
-            correctness_passed=correctness,
-            minimum_improvement_percent=args.minimum_improvement,
-        )
-        print(json.dumps(verification_result.to_dict(), indent=2))
-        return 0 if verification_result.decision == "accept" else 2
+        return _dispatch(args)
     except (
         BenchmarkError,
         ProfilingError,

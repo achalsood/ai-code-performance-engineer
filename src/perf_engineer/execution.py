@@ -60,7 +60,7 @@ def sanitized_environment() -> dict[str, str]:
     return environment
 
 
-def _apply_limits(policy: ExecutionPolicy) -> None:
+def _apply_limits(policy: ExecutionPolicy) -> None:  # pragma: no cover - POSIX only
     import resource
 
     resource_api = cast(Any, resource)
@@ -81,14 +81,14 @@ def _apply_limits(policy: ExecutionPolicy) -> None:
 
 
 def _popen_platform_options(policy: ExecutionPolicy) -> dict[str, Any]:
-    if os.name == "posix":
+    if os.name == "posix":  # pragma: no cover - platform-specific
         return {"start_new_session": True, "preexec_fn": lambda: _apply_limits(policy)}
     subprocess_api = cast(Any, subprocess)
     return {"creationflags": subprocess_api.CREATE_NEW_PROCESS_GROUP}
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
-    if os.name == "posix":
+    if os.name == "posix":  # pragma: no cover - platform-specific
         import signal
 
         with contextlib.suppress(ProcessLookupError):
@@ -101,7 +101,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
 
 
 def _resident_memory_bytes(process_id: int) -> int:
-    if os.name == "nt":
+    if os.name == "nt":  # pragma: no cover - platform-specific
         import ctypes
         from ctypes import wintypes
 
@@ -152,18 +152,19 @@ def _resident_memory_bytes(process_id: int) -> int:
             )
         finally:
             kernel32.CloseHandle(handle)
-    try:
-        for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
-        return 0
+    if os.name == "posix":  # pragma: no cover - platform-specific
+        try:
+            for line in Path(f"/proc/{process_id}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            return 0
     return 0
 
 
 def _resident_working_set_bytes(process_id: int) -> int:
     """Return current resident memory for a Windows process."""
-    if os.name != "nt":
+    if os.name != "nt":  # pragma: no cover - platform-specific
         return _resident_memory_bytes(process_id)
 
     import ctypes
@@ -271,7 +272,7 @@ def _windows_descendant_process_ids(root_process_id: int) -> set[int]:
 
 
 def _process_group_memory_bytes(process_group_id: int) -> int:
-    if os.name == "nt":
+    if os.name == "nt":  # pragma: no cover - platform-specific
         # Do not sum each process' historical peak: those peaks may have
         # occurred at different times and can massively overstate concurrent
         # tree memory. Sample the live working set for the whole tree instead.
@@ -279,20 +280,29 @@ def _process_group_memory_bytes(process_group_id: int) -> int:
             _resident_working_set_bytes(process_id)
             for process_id in _windows_descendant_process_ids(process_group_id)
         )
-    total = 0
-    try:
-        process_directories = (path for path in Path("/proc").iterdir() if path.name.isdigit())
-        for process_directory in process_directories:
-            try:
-                stat = (process_directory / "stat").read_text()
-                fields = stat[stat.rfind(")") + 2 :].split()
-                if len(fields) > 2 and int(fields[2]) == process_group_id:
-                    total += _resident_memory_bytes(int(process_directory.name))
-            except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
-                continue
-    except (FileNotFoundError, PermissionError):
-        return 0
-    return total
+    if os.name == "posix":  # pragma: no cover - platform-specific
+        total = 0
+        try:
+            process_directories = (
+                path for path in Path("/proc").iterdir() if path.name.isdigit()
+            )
+            for process_directory in process_directories:
+                try:
+                    stat = (process_directory / "stat").read_text()
+                    fields = stat[stat.rfind(")") + 2 :].split()
+                    if len(fields) > 2 and int(fields[2]) == process_group_id:
+                        total += _resident_memory_bytes(int(process_directory.name))
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    ProcessLookupError,
+                    ValueError,
+                ):
+                    continue
+        except (FileNotFoundError, PermissionError):
+            return 0
+        return total
+    return 0
 
 class LocalProcessRunner:
     """Resource-limited runner for trusted repositories."""
@@ -330,7 +340,7 @@ class LocalProcessRunner:
 
             monitor_thread = threading.Thread(target=monitor, daemon=True)
             monitor_thread.start()
-            if os.name == "posix":
+            if os.name == "posix":  # pragma: no cover - platform-specific
                 os_api = cast(Any, os)
                 _, status, child_usage = os_api.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(status)
