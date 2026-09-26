@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from perf_engineer.callable_benchmark import PythonCallableTarget
 from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
@@ -105,6 +106,59 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert provider.requests[1].attempt_number == 2
     assert "invalid" in provider.requests[1].feedback[0]
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
+
+
+def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "def benchmark():\n"
+        "    total = 0\n"
+        "    for i in range(20000):\n"
+        "        total += i * i\n"
+        "    return total\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class CallableProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,5 +1,2 @@
+ def benchmark():
+-    total = 0
+-    for i in range(20000):
+-        total += i * i
+-    return total
++    return sum(i * i for i in range(2000))
+"""
+            return [OptimizationCandidate("callable-fast", "Faster callable", "Less work", patch)]
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=CallableProvider(),
+        benchmark_command=None,
+        benchmark_callable=PythonCallableTarget("workload", "benchmark"),
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        rounds=3,
+        maximum_rounds=5,
+        profile_guidance=False,
+    )
+
+    assert result.winner_id == "callable-fast"
+    assert result.evaluations[0].status == "accept"
+    assert result.evaluations[0].result is not None
+    assert result.evaluations[0].result.speedup_percent > 5.0
+    assert result.baseline.repetitions_per_sample > 1
+    assert result.evaluations[0].result.candidate.peak_memory_bytes > 0
 
 
 @pytest.mark.performance
