@@ -162,6 +162,10 @@ def run_paired_callable_benchmarks(
         raise ValueError("callable rounds require 3 <= minimum_rounds <= maximum_rounds")
     if minimum_improvement_percent < 0:
         raise ValueError("minimum improvement must be zero or greater")
+    if warmups < 0:
+        raise ValueError("warmups cannot be negative")
+    if target_sample_seconds <= 0:
+        raise ValueError("target sample seconds must be positive")
     selected_policy = policy or ExecutionPolicy()
     with (
         PythonCallableSession(target, cwd=baseline_cwd, policy=selected_policy) as baseline,
