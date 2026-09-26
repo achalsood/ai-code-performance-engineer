@@ -108,6 +108,14 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+def test_cumulative_speedup_is_measured_from_original_baseline() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    assert optimizer._cumulative_speedup_percent(1.0, 0.8) == pytest.approx(20.0)
+    assert optimizer._cumulative_speedup_percent(1.0, 0.6) == pytest.approx(40.0)
+    assert optimizer._cumulative_speedup_percent(0.0, 0.6) == 0.0
+
+
 def test_refinement_feedback_contains_structured_attribution() -> None:
     import perf_engineer.optimizer as optimizer
     from perf_engineer.models import (
