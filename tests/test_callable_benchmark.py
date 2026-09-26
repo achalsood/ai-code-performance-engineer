@@ -35,6 +35,8 @@ def test_callable_session_reuses_one_interpreter(tmp_path: Path) -> None:
     assert len(set(pids)) == 1
     assert first.wall_seconds > 0.0
     assert second.wall_seconds > 0.0
+    assert first.peak_memory_bytes > 0
+    assert second.peak_memory_bytes > 0
 
 
 def test_callable_sessions_keep_baseline_and_candidate_isolated(tmp_path: Path) -> None:
@@ -92,6 +94,8 @@ def test_paired_callable_benchmark_detects_speedup(tmp_path: Path) -> None:
     assert before.repetitions_per_sample > 1
     assert after.repetitions_per_sample == before.repetitions_per_sample
     assert after.median_seconds < before.median_seconds
+    assert before.peak_memory_bytes > 0
+    assert after.peak_memory_bytes > 0
 
 
 
@@ -140,3 +144,20 @@ def test_paired_callable_keeps_sampling_when_evidence_is_ambiguous(
 
     assert before.measurement_rounds == 5
     assert after.measurement_rounds == 5
+
+
+
+def test_callable_session_enforces_memory_limit(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "def benchmark():\n"
+        "    data = bytearray(20_000_000)\n"
+        "    return len(data)\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(memory_bytes=5_000_000),
+    ) as session, pytest.raises(CallableBenchmarkError, match="memory limit"):
+        session.measure()
