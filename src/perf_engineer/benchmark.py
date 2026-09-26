@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import statistics
+import sys
 from pathlib import Path
 
 from .execution import (
@@ -140,6 +142,63 @@ def _bootstrap_median_interval(
         estimates[int(0.025 * (resamples - 1))],
         estimates[int(0.975 * (resamples - 1))],
     )
+
+def _python_script_target(command: list[str]) -> tuple[Path, list[str]] | None:
+    """Return a Python script target when the command can run in a persistent worker."""
+    if len(command) < 2:
+        return None
+    executable = Path(command[0])
+    current = Path(sys.executable)
+    try:
+        same_python = executable.resolve() == current.resolve()
+    except OSError:
+        same_python = command[0] == sys.executable
+    if not same_python or command[1].startswith("-"):
+        return None
+    script = Path(command[1])
+    if script.suffix.lower() != ".py":
+        return None
+    return script, command[2:]
+
+
+def _measure_python_script(
+    command: list[str],
+    cwd: Path,
+    *,
+    rounds: int,
+    warmups: int,
+    target_seconds: float,
+    runner: CommandRunner,
+    policy: ExecutionPolicy,
+) -> BenchmarkResult | None:
+    target = _python_script_target(command)
+    if target is None:
+        return None
+    script, arguments = target
+    script = script if script.is_absolute() else cwd / script
+    if not script.is_file():
+        return None
+
+    worker = Path(__file__).with_name("_python_benchmark_worker.py")
+    worker_command = [
+        sys.executable,
+        str(worker),
+        "--script",
+        str(script),
+        "--warmups",
+        str(warmups),
+        "--rounds",
+        str(rounds),
+        "--target-seconds",
+        str(target_seconds),
+        "--",
+        *arguments,
+    ]
+    completed = _measure_once(worker_command, cwd, runner, policy)
+    # The execution runner intentionally discards stdout, so persistent worker
+    # transport needs a temporary result file rather than captured process output.
+    return None
+
 
 def run_adaptive_paired_benchmarks(
     command: list[str],
