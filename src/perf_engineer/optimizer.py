@@ -43,14 +43,24 @@ def _percent_change(baseline: float, candidate_value: float) -> float:
     return ((candidate_value - baseline) / baseline) * 100.0
 
 
-def _attribution(candidate: OptimizationCandidate, result: VerificationResult) -> PerformanceAttribution:
-    confidence = "high" if result.stable and result.decision is not Decision.INCONCLUSIVE else ("medium" if result.stable else "low")
+def _attribution(
+    candidate: OptimizationCandidate,
+    result: VerificationResult,
+) -> PerformanceAttribution:
+    confidence = (
+        "high"
+        if result.stable and result.decision is not Decision.INCONCLUSIVE
+        else ("medium" if result.stable else "low")
+    )
     return PerformanceAttribution(
         targeted_issue=candidate.rationale,
         strategy=candidate.strategy,
         baseline_wall_seconds=result.baseline.median_seconds,
         candidate_wall_seconds=result.candidate.median_seconds,
-        wall_change_percent=_percent_change(result.baseline.median_seconds, result.candidate.median_seconds),
+        wall_change_percent=_percent_change(
+            result.baseline.median_seconds,
+            result.candidate.median_seconds,
+        ),
         baseline_cpu_seconds=result.baseline.cpu_mean_seconds,
         candidate_cpu_seconds=result.candidate.cpu_mean_seconds,
         cpu_change_percent=result.cpu_change_percent,
