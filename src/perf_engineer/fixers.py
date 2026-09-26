@@ -16,6 +16,20 @@ class _Rewrite:
     source: str
 
 
+@dataclass(frozen=True)
+class _RewriteSpec:
+    transformer: type[ast.NodeTransformer]
+    title: str
+    rationale: str
+    strategy: str
+    conflicts: frozenset[str] = frozenset()
+
+
+def _specs_are_compatible(specs: tuple[_RewriteSpec, ...]) -> bool:
+    strategies = {spec.strategy for spec in specs}
+    return all(not spec.conflicts.intersection(strategies) for spec in specs)
+
+
 class DeterministicFixProvider:
     """Generate conservative source rewrites for analyzer findings without an LLM."""
 
@@ -58,48 +72,50 @@ class DeterministicFixProvider:
 
 def _rewrite_python_plans(source: str) -> list[_Rewrite]:
     specs = (
-        (
+        _RewriteSpec(
             _MembershipIndexTransformer,
             "Index repeated membership lookups",
             "Builds a set once and reuses it for repeated membership tests inside a loop.",
             "membership-index",
         ),
-        (
+        _RewriteSpec(
             _LinearCountTransformer,
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
         ),
-        (
+        _RewriteSpec(
             _InvariantAllocationTransformer,
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
         ),
-        (
+        _RewriteSpec(
             _BatchedNestedLookupTransformer,
             "Index repeated nested lookup",
             "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
             "nested-loop-index",
         ),
     )
-    applicable: list[tuple[type[ast.NodeTransformer], str, str, str]] = []
+    applicable: list[_RewriteSpec] = []
     plans: list[_Rewrite] = []
     seen_sources: set[str] = set()
-    for transformer_type, title, rationale, strategy in specs:
-        rewrite = _apply_transformers(source, ((transformer_type, title, rationale, strategy),))
+    for spec in specs:
+        rewrite = _apply_transformers(source, (spec,))
         if rewrite is not None:
-            applicable.append((transformer_type, title, rationale, strategy))
+            applicable.append(spec)
             if rewrite.source not in seen_sources:
                 plans.append(rewrite)
                 seen_sources.add(rewrite.source)
 
-    # Explore smaller combinations before larger ones. This keeps the search useful
-    # under a tight candidate budget while correctness and benchmarking still decide
-    # which candidate, if any, is worth keeping.
+    # Explore smaller compatible combinations before larger ones. This keeps the
+    # search useful under a tight candidate budget while correctness and
+    # benchmarking still decide which candidate, if any, is worth keeping.
     for size in range(2, len(applicable) + 1):
         for selected in combinations(applicable, size):
-            combined = _apply_transformers(source, tuple(selected))
+            if not _specs_are_compatible(selected):
+                continue
+            combined = _apply_transformers(source, selected)
             if combined is not None and combined.source not in seen_sources:
                 plans.append(combined)
                 seen_sources.add(combined.source)
@@ -113,22 +129,22 @@ def _rewrite_python(source: str) -> _Rewrite | None:
 
 def _apply_transformers(
     source: str,
-    specs: tuple[tuple[type[ast.NodeTransformer], str, str, str], ...],
+    specs: tuple[_RewriteSpec, ...],
 ) -> _Rewrite | None:
     try:
         rewritten: ast.AST = ast.parse(source)
     except SyntaxError:
         return None
     applied: list[_Rewrite] = []
-    for transformer_type, title, rationale, strategy in specs:
-        transformer = transformer_type()
+    for spec in specs:
+        transformer = spec.transformer()
         rewritten = transformer.visit(rewritten)
         if not getattr(transformer, "changed", False):
             continue
         if isinstance(transformer, _LinearCountTransformer):
             _ensure_counter_import(rewritten)
         ast.fix_missing_locations(rewritten)
-        applied.append(_Rewrite(title, rationale, strategy, ""))
+        applied.append(_Rewrite(spec.title, spec.rationale, spec.strategy, ""))
     if not applied:
         return None
     if len(applied) == 1:
