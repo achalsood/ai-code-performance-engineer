@@ -108,6 +108,63 @@ def test_refines_failed_ai_candidates_with_measurement_feedback(tmp_path: Path) 
     assert any(evaluation.candidate.candidate_id == "fast" for evaluation in result.evaluations)
 
 
+def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "import time\ntime.sleep(0.20)\nvalue = 1\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class CumulativeProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            first = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,3 @@
+ import time
+-time.sleep(0.20)
++time.sleep(0.10)
+ value = 1
+"""
+            second = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,3 @@
+ import time
+-time.sleep(0.10)
++time.sleep(0.01)
+ value = 1
+"""
+            return [
+                OptimizationCandidate("first", "First", "First speedup", first),
+                OptimizationCandidate("second", "Second", "Builds on first", second),
+            ]
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=CumulativeProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        rounds=5,
+        maximum_rounds=7,
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+    )
+
+    assert [item.status for item in result.evaluations] == ["accept", "accept"]
+    second_result = result.evaluations[1].result
+    assert second_result is not None
+    assert second_result.baseline.median_seconds < 0.18
+    assert result.winner_id == "second"
+
+
 def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
     import perf_engineer.optimizer as optimizer
 
