@@ -204,7 +204,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
 
 
-def test_exhausts_stage_attempts_without_looping(tmp_path: Path) -> None:
+def test_exhausts_stage_attempts_without_looping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
     subprocess.run(
@@ -230,6 +232,20 @@ def test_exhausts_stage_attempts_without_looping(tmp_path: Path) -> None:
                 )
             ]
 
+    from perf_engineer.models import BenchmarkResult
+    import perf_engineer.optimizer as optimizer
+
+    baseline = BenchmarkResult(
+        command=("benchmark",),
+        samples_seconds=(1.0, 1.0, 1.0),
+        median_seconds=1.0,
+        mean_seconds=1.0,
+        stdev_seconds=0.0,
+        min_seconds=1.0,
+        max_seconds=1.0,
+    )
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+
     provider = InvalidProvider()
     result = optimize(
         repository=repository,
@@ -237,8 +253,6 @@ def test_exhausts_stage_attempts_without_looping(tmp_path: Path) -> None:
         provider=provider,
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
-        rounds=3,
-        maximum_rounds=3,
         profile_guidance=False,
         maximum_provider_attempts=3,
         maximum_optimization_stages=2,
