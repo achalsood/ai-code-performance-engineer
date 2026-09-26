@@ -42,11 +42,14 @@ def main() -> int:
         started = time.perf_counter()
         cpu_started = time.process_time()
         try:
-            with open(Path(os.devnull), "w", encoding="utf-8") as sink:
-                with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-                    for _ in range(repetitions):
-                        target()
-            payload = {
+            with (
+                open(Path(os.devnull), "w", encoding="utf-8") as sink,
+                contextlib.redirect_stdout(sink),
+                contextlib.redirect_stderr(sink),
+            ):
+                for _ in range(repetitions):
+                    target()
+            payload: dict[str, float | str] = {
                 "wall_seconds": time.perf_counter() - started,
                 "cpu_seconds": time.process_time() - cpu_started,
             }
