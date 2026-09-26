@@ -228,7 +228,7 @@ def test_exhausts_stage_attempts_without_looping(
                     f"invalid-{request.attempt_number}",
                     "Invalid",
                     "Exercise refinement exhaustion",
-                    "not a diff",
+                    f"not a diff attempt {request.attempt_number}",
                 )
             ]
 
