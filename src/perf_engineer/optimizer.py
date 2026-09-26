@@ -368,7 +368,6 @@ def optimize(
             except ProfilingError:
                 baseline_profile = None
         request = _request(repository, baseline_tree, maximum_candidates, baseline_profile)
-        candidates = provider.generate(request)
 
     evaluations: list[CandidateEvaluation] = []
     paired_baselines: list[BenchmarkResult] = []
