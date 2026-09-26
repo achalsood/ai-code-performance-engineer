@@ -116,6 +116,7 @@ class OptimizationRun:
     baseline_profile: ProfileResult | None = None
     provider_attempts: int = 1
     stages: tuple[OptimizationStage, ...] = ()
+    composed_patch: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -556,6 +557,19 @@ def optimize(
             )
 
     winner = stages[-1].candidate_id if stages else None
+    composed_patch: str | None = None
+    if accepted_sequence:
+        with _worktree(repository, commit) as final_tree:
+            _apply_candidate_sequence(final_tree, tuple(accepted_sequence))
+            diff = subprocess.run(
+                ["git", "-C", str(final_tree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if diff.returncode:
+                raise RuntimeError(diff.stderr.strip())
+            composed_patch = diff.stdout or None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
     if paired_baselines:
@@ -593,6 +607,7 @@ def optimize(
         baseline_profile=baseline_profile,
         provider_attempts=provider_attempts,
         stages=tuple(stages),
+        composed_patch=composed_patch,
     )
 
 
@@ -618,23 +633,15 @@ def save_optimization(run: OptimizationRun, output_directory: Path) -> Path:
 def export_winning_patch(run: OptimizationRun, destination: Path) -> Path | None:
     if not run.winner_id:
         return None
-    accepted_ids = {stage.candidate_id for stage in run.stages}
-    if accepted_ids:
-        patches = [
-            evaluation.candidate.patch
-            for evaluation in run.evaluations
-            if evaluation.candidate.candidate_id in accepted_ids
-            and evaluation.result
-            and evaluation.result.decision is Decision.ACCEPT
-        ]
-    else:
+    patch = run.composed_patch
+    if patch is None:
         winner = next(
             (item for item in run.evaluations if item.candidate.candidate_id == run.winner_id),
             None,
         )
-        patches = [winner.candidate.patch] if winner is not None else []
-    if not patches:
+        patch = winner.candidate.patch if winner is not None else None
+    if not patch:
         return None
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text("\n".join(patch.rstrip() for patch in patches) + "\n", encoding="utf-8")
+    destination.write_text(patch.rstrip() + "\n", encoding="utf-8")
     return destination
