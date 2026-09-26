@@ -5,6 +5,7 @@ import difflib
 from dataclasses import dataclass
 from itertools import combinations
 
+from .models import Finding
 from .providers import OptimizationCandidate, OptimizationRequest
 
 
@@ -23,6 +24,7 @@ class _RewriteSpec:
     rationale: str
     strategy: str
     conflicts: frozenset[str] = frozenset()
+    rule_ids: frozenset[str] = frozenset()
 
 
 def _specs_are_compatible(specs: tuple[_RewriteSpec, ...]) -> bool:
@@ -40,7 +42,10 @@ class DeterministicFixProvider:
             source = request.files.get(path)
             if source is None or not path.endswith(".py"):
                 continue
-            for rewrite in _rewrite_python_plans(source):
+            path_findings = tuple(
+                finding for finding in request.findings if finding.path == path
+            )
+            for rewrite in _rewrite_python_plans(source, path_findings):
                 if rewrite.source == source:
                     continue
                 normalized_source = source.replace("\r\n", "\n").replace("\r", "\n")
@@ -70,33 +75,57 @@ class DeterministicFixProvider:
         return candidates
 
 
-def _rewrite_python_plans(source: str) -> list[_Rewrite]:
+def _rewrite_python_plans(
+    source: str, findings: tuple[Finding, ...] = ()
+) -> list[_Rewrite]:
     specs = (
         _RewriteSpec(
             _MembershipIndexTransformer,
             "Index repeated membership lookups",
             "Builds a set once and reuses it for repeated membership tests inside a loop.",
             "membership-index",
+            rule_ids=frozenset({"PERF004"}),
         ),
         _RewriteSpec(
             _LinearCountTransformer,
             "Precompute repeated counts",
             "Replaces repeated list.count calls in a loop with one frequency table.",
             "data-structure-index",
+            rule_ids=frozenset({"PERF003"}),
         ),
         _RewriteSpec(
             _InvariantAllocationTransformer,
             "Hoist invariant loop work",
             "Moves an invariant sorted() or list() allocation outside a loop.",
             "hoist-invariant-work",
+            rule_ids=frozenset({"PERF002"}),
         ),
         _RewriteSpec(
             _BatchedNestedLookupTransformer,
             "Index repeated nested lookup",
             "Builds a lookup dictionary once and reuses it across all outer-loop queries.",
             "nested-loop-index",
+            rule_ids=frozenset({"PERF001"}),
         ),
     )
+    if findings:
+        severity_weight = {"high": 3, "medium": 2, "low": 1}
+        rule_scores: dict[str, int] = {}
+        for finding in findings:
+            rule_scores[finding.rule_id] = rule_scores.get(finding.rule_id, 0) + (
+                severity_weight.get(finding.severity, 1)
+            )
+        declaration_order = {spec.strategy: index for index, spec in enumerate(specs)}
+        specs = tuple(
+            sorted(
+                specs,
+                key=lambda spec: (
+                    -sum(rule_scores.get(rule_id, 0) for rule_id in spec.rule_ids),
+                    declaration_order[spec.strategy],
+                ),
+            )
+        )
+
     applicable: list[_RewriteSpec] = []
     plans: list[_Rewrite] = []
     seen_sources: set[str] = set()
