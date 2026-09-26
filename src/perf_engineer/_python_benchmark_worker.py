@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
+import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -38,12 +41,20 @@ def main() -> int:
         repetitions = int(request.get("repetitions", 1))
         started = time.perf_counter()
         cpu_started = time.process_time()
-        for _ in range(repetitions):
-            target()
-        payload = {
-            "wall_seconds": time.perf_counter() - started,
-            "cpu_seconds": time.process_time() - cpu_started,
-        }
+        try:
+            with open(Path(os.devnull), "w", encoding="utf-8") as sink:
+                with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                    for _ in range(repetitions):
+                        target()
+            payload = {
+                "wall_seconds": time.perf_counter() - started,
+                "cpu_seconds": time.process_time() - cpu_started,
+            }
+        except Exception as exc:
+            payload = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(limit=5),
+            }
         sys.stdout.write(json.dumps(payload) + "\n")
         sys.stdout.flush()
     return 0
