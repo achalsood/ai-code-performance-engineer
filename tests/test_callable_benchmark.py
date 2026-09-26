@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from perf_engineer.callable_benchmark import (
+    CallableBenchmarkError,
     PythonCallableSession,
     PythonCallableTarget,
     run_paired_callable_benchmarks,
@@ -89,3 +92,52 @@ def test_paired_callable_benchmark_detects_speedup(tmp_path: Path) -> None:
     assert before.repetitions_per_sample > 1
     assert after.repetitions_per_sample == before.repetitions_per_sample
     assert after.median_seconds < before.median_seconds
+
+
+
+def test_callable_session_times_out_stalled_work(tmp_path: Path) -> None:
+    (tmp_path / "workload.py").write_text(
+        "import time\n"
+        "def benchmark():\n"
+        "    time.sleep(1.0)\n",
+        encoding="utf-8",
+    )
+
+    with PythonCallableSession(
+        PythonCallableTarget("workload", "benchmark"),
+        cwd=tmp_path,
+        policy=ExecutionPolicy(timeout_seconds=0.05),
+    ) as session:
+        with pytest.raises(CallableBenchmarkError, match="timed out"):
+            session.measure()
+
+
+def test_paired_callable_keeps_sampling_when_evidence_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    baseline.mkdir()
+    candidate.mkdir()
+    source = (
+        "def benchmark():\n"
+        "    total = 0\n"
+        "    for i in range(5000):\n"
+        "        total += i\n"
+        "    return total\n"
+    )
+    (baseline / "workload.py").write_text(source, encoding="utf-8")
+    (candidate / "workload.py").write_text(source, encoding="utf-8")
+
+    before, after = run_paired_callable_benchmarks(
+        PythonCallableTarget("workload", "benchmark"),
+        baseline_cwd=baseline,
+        candidate_cwd=candidate,
+        minimum_rounds=3,
+        maximum_rounds=5,
+        warmups=1,
+        target_sample_seconds=0.005,
+    )
+
+    assert before.measurement_rounds == 5
+    assert after.measurement_rounds == 5
