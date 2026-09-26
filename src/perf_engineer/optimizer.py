@@ -373,6 +373,8 @@ def optimize(
     evaluations: list[CandidateEvaluation] = []
     paired_baselines: list[BenchmarkResult] = []
     accepted_sequence: list[OptimizationCandidate] = []
+    stages: list[OptimizationStage] = []
+    original_baseline_seconds: float | None = None
     provider_attempts = 1
     candidate_index = 0
     seen_patches = {hashlib.sha256(item.patch.encode()).hexdigest() for item in candidates}
@@ -469,6 +471,8 @@ def optimize(
                             policy=selected_policy,
                         )
                 paired_baselines.append(baseline)
+                if original_baseline_seconds is None:
+                    original_baseline_seconds = baseline.median_seconds
                 result = compare(
                     baseline,
                     measured,
@@ -491,6 +495,21 @@ def optimize(
                 )
                 if result.decision is Decision.ACCEPT:
                     accepted_sequence.append(candidate)
+                    assert original_baseline_seconds is not None
+                    stages.append(
+                        OptimizationStage(
+                            stage_number=len(stages) + 1,
+                            candidate_id=candidate.candidate_id,
+                            baseline_commit=commit,
+                            resulting_commit=commit,
+                            incremental_speedup_percent=result.speedup_percent,
+                            cumulative_speedup_percent=_cumulative_speedup_percent(
+                                original_baseline_seconds,
+                                result.candidate.median_seconds,
+                            ),
+                            changed_paths=changed_paths,
+                        )
+                    )
                 if audit_logger:
                     audit_logger.append(
                         "candidate_evaluated",
@@ -518,7 +537,7 @@ def optimize(
             else (0.0, 0.0, 0, "")
         )
     )
-    winner = accepted[0].candidate.candidate_id if accepted else None
+    winner = stages[-1].candidate_id if stages else None
     if audit_logger:
         audit_logger.append("optimization_completed", {"winner_id": winner})
     if paired_baselines:
@@ -555,6 +574,7 @@ def optimize(
         environment=environment_fingerprint(),
         baseline_profile=baseline_profile,
         provider_attempts=provider_attempts,
+        stages=tuple(stages),
     )
 
 
