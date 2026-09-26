@@ -37,6 +37,17 @@ class CandidateEvaluation:
     attribution: PerformanceAttribution | None = None
 
 
+@dataclass(frozen=True)
+class OptimizationStage:
+    stage_number: int
+    candidate_id: str
+    baseline_commit: str
+    resulting_commit: str
+    incremental_speedup_percent: float
+    cumulative_speedup_percent: float
+    changed_paths: tuple[str, ...]
+
+
 def _percent_change(baseline: float, candidate_value: float) -> float:
     if baseline <= 0:
         return 0.0
@@ -104,9 +115,16 @@ class OptimizationRun:
     environment: dict[str, str | int | None] | None = None
     baseline_profile: ProfileResult | None = None
     provider_attempts: int = 1
+    stages: tuple[OptimizationStage, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _cumulative_speedup_percent(original_seconds: float, current_seconds: float) -> float:
+    if original_seconds <= 0:
+        return 0.0
+    return ((original_seconds - current_seconds) / original_seconds) * 100.0
 
 
 def _git(repository: Path, *arguments: str) -> None:
@@ -511,7 +529,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=5,
+        schema_version=6,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
