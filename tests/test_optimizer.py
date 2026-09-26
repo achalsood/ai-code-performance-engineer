@@ -163,6 +163,15 @@ def test_optimizer_benchmarks_next_candidate_on_accepted_state(tmp_path: Path) -
     assert second_result is not None
     assert second_result.baseline.median_seconds < 0.18
     assert result.winner_id == "second"
+    assert [stage.candidate_id for stage in result.stages] == ["first", "second"]
+    assert result.stages[0].stage_number == 1
+    assert result.stages[1].stage_number == 2
+    assert result.stages[0].incremental_speedup_percent > 0
+    assert result.stages[1].incremental_speedup_percent > 0
+    assert result.stages[1].cumulative_speedup_percent > (
+        result.stages[0].cumulative_speedup_percent
+    )
+    assert result.stages[1].changed_paths == ("workload.py",)
 
 
 def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> None:
