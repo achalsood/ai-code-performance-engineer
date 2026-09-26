@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, required=True)
     parser.add_argument("--rounds", type=int, required=True)
     parser.add_argument("--target-seconds", type=float, required=True)
+    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -59,7 +60,7 @@ def main() -> int:
         "cpu_seconds": cpu_samples,
         "pid": os.getpid(),
     }
-    sys.__stdout__.write(json.dumps(payload))
+    args.output.write_text(json.dumps(payload), encoding="utf-8")
     return 0
 
 
