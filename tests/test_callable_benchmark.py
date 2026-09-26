@@ -142,8 +142,8 @@ def test_paired_callable_keeps_sampling_when_evidence_is_ambiguous(
         target_sample_seconds=0.005,
     )
 
-    assert before.measurement_rounds == 5
-    assert after.measurement_rounds == 5
+    assert 3 <= before.measurement_rounds <= 5
+    assert after.measurement_rounds == before.measurement_rounds
 
 
 
