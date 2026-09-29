@@ -160,7 +160,7 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
         rounds=5,
-        maximum_rounds=7,
+        maximum_rounds=15,
         profile_guidance=False,
         maximum_provider_attempts=1,
         maximum_optimization_stages=2,
@@ -174,6 +174,10 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert second_result.baseline.median_seconds < 0.18
     assert result.winner_id == "second"
     assert [stage.candidate_id for stage in result.stages] == ["first", "second"]
+    assert all(stage.promotion_reason for stage in result.stages)
+    assert result.stages[0].alternatives_considered == ("first",)
+    assert result.stages[1].alternatives_considered == ("second",)
+    assert "highest utility score" in result.stages[0].promotion_reason
     assert [
         (evaluation.stage_number, evaluation.attempt_number)
         for evaluation in result.evaluations
@@ -194,6 +198,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert result.final_verification.candidate.median_seconds < (
         result.final_verification.baseline.median_seconds * 0.5
     )
+    assert "Promoted 2 stage(s): first -> second." in result.explanation
+    assert "Final verification accept:" in result.explanation
+    assert "correctness=passed" in result.explanation
 
     exported = export_winning_patch(result, tmp_path / "cumulative.patch")
     assert exported is not None
@@ -270,6 +277,13 @@ index 6247b45..f91996d 100644
     )
 
     assert [evaluation.candidate.candidate_id for evaluation in result.evaluations] == ["first"]
+    explanation = result.evaluations[0].explanation
+    assert explanation is not None
+    assert explanation.decision == "reject"
+    assert explanation.correctness_passed is False
+    assert explanation.speedup_percent is None
+    assert explanation.changed_paths == ("workload.py",)
+    assert "performance was not measured" in explanation.summary
 
 
 def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
@@ -319,6 +333,17 @@ def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
     assert len(result.evaluations) == 2
     assert [evaluation.status for evaluation in result.evaluations] == ["invalid", "invalid"]
     assert [evaluation.attempt_number for evaluation in result.evaluations] == [1, 2]
+    assert all(evaluation.explanation is not None for evaluation in result.evaluations)
+    assert all(
+        evaluation.explanation.decision == "invalid"
+        for evaluation in result.evaluations
+        if evaluation.explanation is not None
+    )
+    assert all(
+        evaluation.explanation.speedup_percent is None
+        for evaluation in result.evaluations
+        if evaluation.explanation is not None
+    )
 
 
 def test_exhausts_stage_attempts_without_looping(
@@ -381,6 +406,8 @@ def test_exhausts_stage_attempts_without_looping(
     assert all(evaluation.status == "invalid" for evaluation in result.evaluations)
     assert result.stages == ()
     assert result.winner_id is None
+    assert "No optimization was promoted." in result.explanation
+    assert "3 invalid" in result.explanation
 
 
 def test_rejects_zero_optimization_stages(tmp_path: Path) -> None:
@@ -733,6 +760,20 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert attribution.baseline_wall_seconds > attribution.candidate_wall_seconds
     assert attribution.wall_change_percent < 0
     assert attribution.confidence in {"medium", "high"}
+    explanation = result.evaluations[0].explanation
+    assert explanation is not None
+    assert explanation.decision == "accept"
+    assert explanation.correctness_passed
+    assert explanation.targeted_issue == "Less work"
+    assert explanation.strategy == "unspecified"
+    assert explanation.changed_paths == ("workload.py",)
+    assert explanation.speedup_percent is not None
+    assert explanation.speedup_percent > 5.0
+    assert explanation.speedup_ci95_low is not None
+    assert explanation.baseline_wall_seconds is not None
+    assert explanation.candidate_wall_seconds is not None
+    assert "ACCEPT:" in explanation.summary
+    assert result.schema_version == 8
 
 
 @pytest.mark.performance

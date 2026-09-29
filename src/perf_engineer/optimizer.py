@@ -27,6 +27,26 @@ from .verification import compare, run_correctness
 
 
 @dataclass(frozen=True)
+class OptimizationExplanation:
+    summary: str
+    targeted_issue: str
+    strategy: str
+    evidence_ids: tuple[str, ...]
+    changed_paths: tuple[str, ...]
+    decision: str
+    reason: str
+    correctness_passed: bool | None
+    confidence: str
+    baseline_wall_seconds: float | None = None
+    candidate_wall_seconds: float | None = None
+    speedup_percent: float | None = None
+    speedup_ci95_low: float | None = None
+    speedup_ci95_high: float | None = None
+    cpu_change_percent: float | None = None
+    memory_change_percent: float | None = None
+
+
+@dataclass(frozen=True)
 class CandidateEvaluation:
     candidate: OptimizationCandidate
     status: str
@@ -38,6 +58,7 @@ class CandidateEvaluation:
     baseline_state: str | None = None
     stage_number: int | None = None
     attempt_number: int | None = None
+    explanation: OptimizationExplanation | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +70,8 @@ class OptimizationStage:
     incremental_speedup_percent: float
     cumulative_speedup_percent: float
     changed_paths: tuple[str, ...]
+    promotion_reason: str = ""
+    alternatives_considered: tuple[str, ...] = ()
 
 
 def _percent_change(baseline: float, candidate_value: float) -> float:
@@ -106,6 +129,60 @@ def _attribution(
     )
 
 
+def _explanation(
+    candidate: OptimizationCandidate,
+    request: OptimizationRequest,
+    *,
+    decision: str,
+    reason: str,
+    changed_paths: tuple[str, ...],
+    result: VerificationResult | None = None,
+    attribution: PerformanceAttribution | None = None,
+    correctness_passed: bool | None = None,
+) -> OptimizationExplanation:
+    targeted_issue = (
+        attribution.targeted_issue if attribution else _evidence_label(candidate, request)
+    )
+    confidence = attribution.confidence if attribution else "unmeasured"
+    if result is not None:
+        correctness_passed = result.correctness_passed
+        summary = (
+            f"{decision.upper()}: {candidate.strategy} targeted {targeted_issue}; "
+            f"measured {result.speedup_percent:.2f}% speedup "
+            f"(95% CI {result.speedup_ci95_low:.2f}% to {result.speedup_ci95_high:.2f}%). "
+            f"{reason}"
+        )
+    else:
+        summary = (
+            f"{decision.upper()}: {candidate.strategy} targeted {targeted_issue}; "
+            f"performance was not measured. {reason}"
+        )
+    return OptimizationExplanation(
+        summary=summary,
+        targeted_issue=targeted_issue,
+        strategy=candidate.strategy,
+        evidence_ids=candidate.target_evidence_ids,
+        changed_paths=changed_paths,
+        decision=decision,
+        reason=reason,
+        correctness_passed=correctness_passed,
+        confidence=confidence,
+        baseline_wall_seconds=(
+            result.baseline.median_seconds if result is not None else None
+        ),
+        candidate_wall_seconds=(
+            result.candidate.median_seconds if result is not None else None
+        ),
+        speedup_percent=result.speedup_percent if result is not None else None,
+        speedup_ci95_low=result.speedup_ci95_low if result is not None else None,
+        speedup_ci95_high=result.speedup_ci95_high if result is not None else None,
+        cpu_change_percent=result.cpu_change_percent if result is not None else None,
+        memory_change_percent=(
+            result.memory_change_percent if result is not None else None
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class OptimizationRun:
     schema_version: int
@@ -121,9 +198,46 @@ class OptimizationRun:
     stages: tuple[OptimizationStage, ...] = ()
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
+    explanation: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _run_explanation(
+    stages: tuple[OptimizationStage, ...],
+    evaluations: tuple[CandidateEvaluation, ...],
+    final_verification: VerificationResult | None,
+) -> str:
+    if not stages:
+        invalid = sum(item.status == "invalid" for item in evaluations)
+        rejected = sum(item.status == Decision.REJECT.value for item in evaluations)
+        inconclusive = sum(
+            item.status == Decision.INCONCLUSIVE.value for item in evaluations
+        )
+        return (
+            "No optimization was promoted. "
+            f"Evaluated {len(evaluations)} candidate(s): {rejected} rejected, "
+            f"{inconclusive} inconclusive, {invalid} invalid."
+        )
+
+    promoted = " -> ".join(stage.candidate_id for stage in stages)
+    if final_verification is None:
+        return (
+            f"Promoted {len(stages)} stage(s): {promoted}. "
+            "Final original-to-optimized verification is unavailable."
+        )
+    return (
+        f"Promoted {len(stages)} stage(s): {promoted}. Final verification "
+        f"{final_verification.decision.value}: "
+        f"{final_verification.speedup_percent:.2f}% speedup "
+        f"(95% CI {final_verification.speedup_ci95_low:.2f}% to "
+        f"{final_verification.speedup_ci95_high:.2f}%), "
+        f"CPU change {final_verification.cpu_change_percent:.2f}%, "
+        f"memory change {final_verification.memory_change_percent:.2f}%; "
+        f"correctness={'passed' if final_verification.correctness_passed else 'failed'}. "
+        f"{final_verification.reason}"
+    )
 
 
 def _apply_candidate_sequence(
@@ -509,16 +623,25 @@ def optimize(
                                 policy=selected_policy,
                             )
                             if not correctness:
+                                reason = "candidate failed the correctness command"
                                 evaluation = CandidateEvaluation(
                                     candidate,
                                     Decision.REJECT.value,
                                     None,
-                                    "candidate failed the correctness command",
+                                    reason,
                                     changed_paths,
                                     0.0,
                                     baseline_state=baseline_state,
                                     stage_number=stage_number,
                                     attempt_number=stage_attempt,
+                                    explanation=_explanation(
+                                        candidate,
+                                        request,
+                                        decision=Decision.REJECT.value,
+                                        reason=reason,
+                                        changed_paths=changed_paths,
+                                        correctness_passed=False,
+                                    ),
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -561,6 +684,7 @@ def optimize(
                             ),
                             maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                         )
+                        attribution = _attribution(candidate, result, request)
                         evaluation = CandidateEvaluation(
                             candidate,
                             result.decision.value,
@@ -568,10 +692,19 @@ def optimize(
                             None,
                             changed_paths,
                             result.utility_score,
-                            _attribution(candidate, result, request),
+                            attribution,
                             baseline_state=baseline_state,
                             stage_number=stage_number,
                             attempt_number=stage_attempt,
+                            explanation=_explanation(
+                                candidate,
+                                request,
+                                decision=result.decision.value,
+                                reason=result.reason,
+                                changed_paths=changed_paths,
+                                result=result,
+                                attribution=attribution,
+                            ),
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -585,16 +718,24 @@ def optimize(
                                 },
                             )
                 except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
+                    reason = str(exc)
                     evaluation = CandidateEvaluation(
                         candidate,
                         "invalid",
                         None,
-                        str(exc),
+                        reason,
                         (),
                         0.0,
                         baseline_state=baseline_state,
                         stage_number=stage_number,
                         attempt_number=stage_attempt,
+                        explanation=_explanation(
+                            candidate,
+                            request,
+                            decision="invalid",
+                            reason=reason,
+                            changed_paths=(),
+                        ),
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
@@ -627,6 +768,16 @@ def optimize(
 
             selected = accepted[0]
             assert selected.result is not None
+            ranked_alternatives = tuple(
+                item.candidate.candidate_id for item in accepted
+            )
+            promotion_reason = (
+                f"Promoted {selected.candidate.candidate_id} from "
+                f"{len(accepted)} accepted candidate(s): highest utility score "
+                f"({selected.utility_score:.4f}), then speedup CI lower bound "
+                f"({selected.result.speedup_ci95_low:.2f}%), memory use, and "
+                "candidate ID as deterministic tie-breakers."
+            )
             accepted_sequence.append(selected.candidate)
             with _worktree(repository, commit) as resulting_tree:
                 _apply_candidate_sequence(resulting_tree, tuple(accepted_sequence))
@@ -644,6 +795,8 @@ def optimize(
                         selected.result.candidate.median_seconds,
                     ),
                     changed_paths=selected.changed_paths,
+                    promotion_reason=promotion_reason,
+                    alternatives_considered=ranked_alternatives,
                 )
             )
             if audit_logger:
@@ -749,7 +902,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=7,
+        schema_version=8,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -762,6 +915,9 @@ def optimize(
         stages=tuple(stages),
         composed_patch=composed_patch,
         final_verification=final_verification,
+        explanation=_run_explanation(
+            tuple(stages), tuple(evaluations), final_verification
+        ),
     )
 
 
