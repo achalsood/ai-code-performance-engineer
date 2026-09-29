@@ -198,9 +198,46 @@ class OptimizationRun:
     stages: tuple[OptimizationStage, ...] = ()
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
+    explanation: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _run_explanation(
+    stages: tuple[OptimizationStage, ...],
+    evaluations: tuple[CandidateEvaluation, ...],
+    final_verification: VerificationResult | None,
+) -> str:
+    if not stages:
+        invalid = sum(item.status == "invalid" for item in evaluations)
+        rejected = sum(item.status == Decision.REJECT.value for item in evaluations)
+        inconclusive = sum(
+            item.status == Decision.INCONCLUSIVE.value for item in evaluations
+        )
+        return (
+            "No optimization was promoted. "
+            f"Evaluated {len(evaluations)} candidate(s): {rejected} rejected, "
+            f"{inconclusive} inconclusive, {invalid} invalid."
+        )
+
+    promoted = " -> ".join(stage.candidate_id for stage in stages)
+    if final_verification is None:
+        return (
+            f"Promoted {len(stages)} stage(s): {promoted}. "
+            "Final original-to-optimized verification is unavailable."
+        )
+    return (
+        f"Promoted {len(stages)} stage(s): {promoted}. Final verification "
+        f"{final_verification.decision.value}: "
+        f"{final_verification.speedup_percent:.2f}% speedup "
+        f"(95% CI {final_verification.speedup_ci95_low:.2f}% to "
+        f"{final_verification.speedup_ci95_high:.2f}%), "
+        f"CPU change {final_verification.cpu_change_percent:.2f}%, "
+        f"memory change {final_verification.memory_change_percent:.2f}%; "
+        f"correctness={'passed' if final_verification.correctness_passed else 'failed'}. "
+        f"{final_verification.reason}"
+    )
 
 
 def _apply_candidate_sequence(
@@ -878,6 +915,9 @@ def optimize(
         stages=tuple(stages),
         composed_patch=composed_patch,
         final_verification=final_verification,
+        explanation=_run_explanation(
+            tuple(stages), tuple(evaluations), final_verification
+        ),
     )
 
 
