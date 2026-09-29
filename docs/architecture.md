@@ -123,7 +123,7 @@ Git baseline
 An optimization state is the content-addressed Git tree produced by the current worktree. The engine builds the tree through a temporary Git index, so tracked modifications, deletions, file modes, binary content, and newly created non-ignored files all contribute to the identity without mutating the worktree's real index. Clean baselines therefore retain their actual tree identity rather than collapsing to an empty-diff hash. Each promoted stage records its `baseline_state` and `resulting_state`. Candidate evaluations record the state they were measured against together with their stage and provider attempt numbers.
 
 This is deliberately different from treating A, B, and A+B as sequential stages. A, B, and A+B
-may be *alternatives within one stage*. Only a candidate that passes the evidence gates is promoted;
+may be *alternatives within one stage*. Only a candidate that passes the evidence gates is promoted; each promoted stage also records the ordered accepted alternatives and deterministic promotion rationale;
 the next stage starts from that promoted state and generates new hypotheses from its current source
 and evidence.
 
