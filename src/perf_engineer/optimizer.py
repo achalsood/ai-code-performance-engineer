@@ -396,7 +396,7 @@ def optimize(
     stages: list[OptimizationStage] = []
     original_baseline_seconds: float | None = None
     provider_attempts = 0
-    seen_patches: set[tuple[str, str]] = set()
+    seen_resulting_states: set[tuple[str, str]] = set()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
@@ -437,11 +437,22 @@ def optimize(
             fresh_candidates: list[OptimizationCandidate] = []
             used_ids = {item.candidate.candidate_id for item in evaluations}
             for candidate in candidates:
-                patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
-                patch_key = (baseline_state, patch_hash)
-                if patch_key in seen_patches:
+                try:
+                    with _worktree(repository, commit) as candidate_state_tree:
+                        _apply_candidate_sequence(
+                            candidate_state_tree, tuple(accepted_sequence)
+                        )
+                        apply_patch(candidate_state_tree, candidate.patch)
+                        candidate_state = _optimization_state_id(candidate_state_tree)
+                except (PatchValidationError, RuntimeError):
+                    candidate_state = (
+                        "invalid:"
+                        + hashlib.sha256(candidate.patch.encode()).hexdigest()[:16]
+                    )
+                state_key = (baseline_state, candidate_state)
+                if state_key in seen_resulting_states:
                     continue
-                seen_patches.add(patch_key)
+                seen_resulting_states.add(state_key)
                 if candidate.candidate_id in used_ids:
                     candidate = replace(
                         candidate,
