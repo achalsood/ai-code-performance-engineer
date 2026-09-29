@@ -229,7 +229,7 @@ Reviewable unified patch
 ```
 
 Candidates within a stage are alternatives measured against the same current-state baseline.
-Only the best verified candidate is promoted. The promoted result becomes a content-addressed Git-tree optimization state, which is analyzed again before the next stage generates fresh alternatives.
+Only the best verified candidate is promoted. Stage promotion decisions are also explained with the accepted alternatives and deterministic ranking rationale. The promoted result becomes a content-addressed Git-tree optimization state, which is analyzed again before the next stage generates fresh alternatives.
 Provider attempts are bounded independently within each stage, and every evaluation records the
 state, stage, and attempt that produced it. Candidate deduplication is semantic and state-aware: different patch text that produces the same resulting Git tree from the same baseline is evaluated once, while an equivalent transformation may be reconsidered after the baseline state genuinely changes.
 
