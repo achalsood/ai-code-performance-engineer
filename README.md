@@ -26,10 +26,10 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Python, JavaScript, and TypeScript AST analysis plus normalized profiler adapters
 - Secret-redacted AI context, content hashes, and reproducible environment fingerprints
 - Automatic Python baseline profiling with repository-owned hotspot prioritization
-- Measurement-guided AI refinement with state-aware duplicate-patch suppression
+- Measurement-guided AI refinement with content-addressed semantic candidate deduplication
 - Cumulative multi-stage optimization that re-analyzes each promoted state before generating the next alternatives
 - Direct original-vs-final verification and reproducible unified final patch export
-- Deterministic optimization-state identities with stage/attempt provenance for every evaluated candidate
+- Content-addressed Git-tree optimization-state identities with stage/attempt provenance for every evaluated candidate
 
 ## Quick start
 
@@ -168,8 +168,7 @@ a strategy, expected impact, and risk, and providers are instructed to diversify
 complexity, data structures, repeated work, allocations, serialization, I/O batching, and cache
 locality. If an attempt produces no accepted patch, the next attempt in that stage receives concise
 measured feedback for each failure. `--maximum-provider-attempts` bounds refinement cost within a
-stage, while promoted candidates advance the optimizer to a fresh state for the next stage. Duplicate
-patches are suppressed per optimization state and candidate IDs remain unique across attempts.
+stage, while promoted candidates advance the optimizer to a fresh state for the next stage. Candidates that produce the same resulting Git tree from the same baseline state are suppressed before expensive benchmarking, even when their patch text differs. Candidate IDs remain unique across attempts.
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.
@@ -229,11 +228,9 @@ Reviewable unified patch
 ```
 
 Candidates within a stage are alternatives measured against the same current-state baseline.
-Only the best verified candidate is promoted. The promoted result becomes a deterministic new
-optimization state, which is analyzed again before the next stage generates fresh alternatives.
+Only the best verified candidate is promoted. The promoted result becomes a content-addressed Git-tree optimization state, which is analyzed again before the next stage generates fresh alternatives.
 Provider attempts are bounded independently within each stage, and every evaluation records the
-state, stage, and attempt that produced it. Patch deduplication is state-aware, so a patch shape
-may be reconsidered when the cumulative source state has genuinely changed.
+state, stage, and attempt that produced it. Candidate deduplication is semantic and state-aware: different patch text that produces the same resulting Git tree from the same baseline is evaluated once, while an equivalent transformation may be reconsidered after the baseline state genuinely changes.
 
 After the final promoted stage, the engine reconstructs the complete accepted sequence in an
 isolated worktree, reruns correctness, directly benchmarks the original repository against the
