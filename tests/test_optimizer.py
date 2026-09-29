@@ -213,6 +213,65 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
 
 
+def test_deduplicates_different_patches_that_produce_same_resulting_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    first_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+    second_patch = """diff --git a/workload.py b/workload.py
+index 6247b45..f91996d 100644
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+
+    class EquivalentProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            return [
+                OptimizationCandidate("first", "First", "Equivalent result", first_patch),
+                OptimizationCandidate("second", "Second", "Equivalent result", second_patch),
+            ]
+
+    baseline = BenchmarkResult(
+        ("python", "workload.py"), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: False)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=EquivalentProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
+    )
+
+    assert [evaluation.candidate.candidate_id for evaluation in result.evaluations] == ["first"]
+
+
 def test_exhausts_stage_attempts_without_looping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
