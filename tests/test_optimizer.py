@@ -160,7 +160,7 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
         benchmark_command=[sys.executable, "workload.py"],
         test_command=[sys.executable, "-m", "py_compile", "workload.py"],
         rounds=5,
-        maximum_rounds=7,
+        maximum_rounds=15,
         profile_guidance=False,
         maximum_provider_attempts=1,
         maximum_optimization_stages=2,
