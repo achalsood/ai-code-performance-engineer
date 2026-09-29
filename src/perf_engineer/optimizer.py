@@ -143,16 +143,36 @@ def _cumulative_speedup_percent(original_seconds: float, current_seconds: float)
 
 
 def _optimization_state_id(worktree: Path) -> str:
-    """Return a content-addressed identity for the current repository state."""
-    result = subprocess.run(
-        ["git", "-C", str(worktree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode:
-        raise RuntimeError(result.stderr.decode(errors="replace").strip())
-    digest = hashlib.sha256(result.stdout).hexdigest()
-    return f"state:{digest[:16]}"
+    """Return the Git tree identity of the current repository state."""
+    with tempfile.TemporaryDirectory(prefix="perf-engineer-state-") as directory:
+        index_path = Path(directory) / "index"
+        environment = os.environ.copy()
+        environment["GIT_INDEX_FILE"] = str(index_path)
+
+        for arguments in (("read-tree", "HEAD"), ("add", "-A", "--", ".")):
+            result = subprocess.run(
+                ["git", "-C", str(worktree), *arguments],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip())
+
+        result = subprocess.run(
+            ["git", "-C", str(worktree), "write-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip())
+        tree_id = result.stdout.strip()
+        if not tree_id:
+            raise RuntimeError("git write-tree returned an empty tree identity")
+        return f"state:{tree_id}"
 
 
 def _git(repository: Path, *arguments: str) -> None:
