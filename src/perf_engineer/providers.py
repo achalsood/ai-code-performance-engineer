@@ -18,6 +18,14 @@ class ProviderError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class OptimizationPlanStep:
+    priority: int
+    evidence_id: str
+    rationale: str
+    expected_strategy: str
+
+
+@dataclass(frozen=True)
 class OptimizationRequest:
     objective: str
     language: str
@@ -30,6 +38,7 @@ class OptimizationRequest:
     hotspots: tuple[Hotspot, ...] = ()
     attempt_number: int = 1
     feedback: tuple[str, ...] = ()
+    plan: tuple[OptimizationPlanStep, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,7 +105,7 @@ def _system_prompt(maximum_candidates: int) -> str:
         "candidates across applicable strategies instead of returning minor variants. "
         "Use finding IDs in the form finding:<rule_id>:<path>:<line> and hotspot IDs in the form "
         "hotspot:<file>:<line>:<function> in target_evidence_ids so each candidate states the "
-        "evidence it targets. Use the ranked findings and optimization_hints to target measured "
+        "evidence it targets. Follow the optimization plan in priority order and use the ranked findings and optimization_hints to target measured "
         "hot paths. Prefer algorithmic or allocation reductions over cosmetic rewrites. "
         "Each candidate "
         "must isolate one optimization so the benchmark can attribute its effect. If feedback "
