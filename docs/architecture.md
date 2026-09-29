@@ -193,7 +193,7 @@ correctness + confidence + decision
 
 Static findings and profiler hotspots are assigned evidence identifiers and supplied to providers.
 Candidate-declared evidence links are resolved back to human-readable findings or hotspots for the
-stored attribution. This makes a result explain not only *whether* a patch won, but what measured
+stored attribution. Each `CandidateEvaluation` also stores an `OptimizationExplanation` that turns this evidence into an auditable decision record: target, strategy, evidence IDs, changed paths, correctness status, confidence, decision reason, wall-time before/after, speedup and confidence interval, and CPU/memory deltas. Correctness failures and invalid patches receive unmeasured explanations rather than losing their rejection rationale. This makes a result explain not only *whether* a patch won, but what measured
 problem it attempted to address and what changed.
 
 ## Benchmarking and verification
@@ -238,7 +238,7 @@ without requiring consumers to replay intermediate candidate patches.
 
 ## Persistence and provenance
 
-Optimization runs are serialized as versioned JSON records. Schema version 7 records the content-addressed state semantics introduced after v1.1.0. A run captures the baseline commit,
+Optimization runs are serialized as versioned JSON records. Schema version 8 records structured candidate explanations in addition to the content-addressed state semantics introduced after v1.1.0. A run captures the baseline commit,
 environment fingerprint, baseline measurements, optional baseline profile, all candidate
 evaluations, provider-attempt count, promoted stages, winner, final verification, and composed
 patch.
