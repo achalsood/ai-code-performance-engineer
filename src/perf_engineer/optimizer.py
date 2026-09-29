@@ -70,6 +70,8 @@ class OptimizationStage:
     incremental_speedup_percent: float
     cumulative_speedup_percent: float
     changed_paths: tuple[str, ...]
+    promotion_reason: str = ""
+    alternatives_considered: tuple[str, ...] = ()
 
 
 def _percent_change(baseline: float, candidate_value: float) -> float:
@@ -729,6 +731,16 @@ def optimize(
 
             selected = accepted[0]
             assert selected.result is not None
+            ranked_alternatives = tuple(
+                item.candidate.candidate_id for item in accepted
+            )
+            promotion_reason = (
+                f"Promoted {selected.candidate.candidate_id} from "
+                f"{len(accepted)} accepted candidate(s): highest utility score "
+                f"({selected.utility_score:.4f}), then speedup CI lower bound "
+                f"({selected.result.speedup_ci95_low:.2f}%), memory use, and "
+                "candidate ID as deterministic tie-breakers."
+            )
             accepted_sequence.append(selected.candidate)
             with _worktree(repository, commit) as resulting_tree:
                 _apply_candidate_sequence(resulting_tree, tuple(accepted_sequence))
@@ -746,6 +758,8 @@ def optimize(
                         selected.result.candidate.median_seconds,
                     ),
                     changed_paths=selected.changed_paths,
+                    promotion_reason=promotion_reason,
+                    alternatives_considered=ranked_alternatives,
                 )
             )
             if audit_logger:
