@@ -74,3 +74,22 @@ def test_ignores_membership_in_annotated_set_inside_loop(tmp_path: Path) -> None
         "        continue\n"
     )
     assert "PERF004" not in {finding.rule_id for finding in analyze_file(source)}
+
+
+def test_ignores_loop_dependent_list_allocation(tmp_path: Path) -> None:
+    source = tmp_path / "safe.py"
+    source.write_text(
+        "for case in cases:\n"
+        "    run_correctness(list(case.test_command))\n"
+    )
+    assert "PERF002" not in {finding.rule_id for finding in analyze_file(source)}
+
+
+def test_detects_invariant_list_allocation_inside_loop(tmp_path: Path) -> None:
+    source = tmp_path / "slow.py"
+    source.write_text(
+        "values = tuple(range(10))\n"
+        "for case in cases:\n"
+        "    consume(list(values))\n"
+    )
+    assert "PERF002" in {finding.rule_id for finding in analyze_file(source)}

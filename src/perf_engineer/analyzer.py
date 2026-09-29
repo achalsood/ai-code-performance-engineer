@@ -117,7 +117,19 @@ class PerformanceVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         function_name = node.func.id if isinstance(node.func, ast.Name) else None
-        if self._loop_depth and function_name in {"sorted", "list"}:
+        loop_bound_names = set().union(*self._loop_bound_names) if self._loop_bound_names else set()
+        call_depends_on_loop_value = any(
+            any(
+                isinstance(part, ast.Name) and part.id in loop_bound_names
+                for part in ast.walk(argument)
+            )
+            for argument in node.args
+        )
+        if (
+            self._loop_depth
+            and function_name in {"sorted", "list"}
+            and not call_depends_on_loop_value
+        ):
             self._add(
                 "PERF002",
                 node,
