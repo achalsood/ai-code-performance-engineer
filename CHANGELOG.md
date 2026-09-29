@@ -5,6 +5,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Stage records now preserve accepted alternatives and the deterministic promotion rationale; run records summarize the complete promoted sequence and final original-to-optimized verification.
+
 - Optimization records now include structured per-candidate explanations with target evidence, strategy, changed paths, correctness, decision rationale, confidence, wall-time measurements, speedup confidence intervals, and CPU/memory deltas.
 - Correctness failures and invalid candidates retain explanations even when performance measurement is intentionally skipped.
 - Optimization record schema is now version 8 for the explanation payload.
