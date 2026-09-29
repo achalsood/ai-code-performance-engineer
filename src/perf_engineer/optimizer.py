@@ -142,18 +142,37 @@ def _cumulative_speedup_percent(original_seconds: float, current_seconds: float)
     return ((original_seconds - current_seconds) / original_seconds) * 100.0
 
 
-def _optimization_state_id(
-    baseline_commit: str,
-    candidates: tuple[OptimizationCandidate, ...],
-) -> str:
-    digest = hashlib.sha256()
-    digest.update(baseline_commit.encode())
-    for candidate in candidates:
-        digest.update(b"\0")
-        digest.update(candidate.candidate_id.encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(candidate.patch.encode()).digest())
-    return f"state:{digest.hexdigest()[:16]}"
+def _optimization_state_id(worktree: Path) -> str:
+    """Return the Git tree identity of the current repository state."""
+    with tempfile.TemporaryDirectory(prefix="perf-engineer-state-") as directory:
+        index_path = Path(directory) / "index"
+        environment = os.environ.copy()
+        environment["GIT_INDEX_FILE"] = str(index_path)
+
+        for arguments in (("read-tree", "HEAD"), ("add", "-A", "--", ".")):
+            result = subprocess.run(
+                ["git", "-C", str(worktree), *arguments],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip())
+
+        result = subprocess.run(
+            ["git", "-C", str(worktree), "write-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip())
+        tree_id = result.stdout.strip()
+        if not tree_id:
+            raise RuntimeError("git write-tree returned an empty tree identity")
+        return f"state:{tree_id}"
 
 
 def _git(repository: Path, *arguments: str) -> None:
@@ -397,12 +416,14 @@ def optimize(
     stages: list[OptimizationStage] = []
     original_baseline_seconds: float | None = None
     provider_attempts = 0
-    seen_patches: set[tuple[str, str]] = set()
+    seen_resulting_states: set[tuple[str, str]] = set()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
         promoted = False
-        baseline_state = _optimization_state_id(commit, tuple(accepted_sequence))
+        with _worktree(repository, commit) as state_tree:
+            _apply_candidate_sequence(state_tree, tuple(accepted_sequence))
+            baseline_state = _optimization_state_id(state_tree)
 
         for stage_attempt in range(1, maximum_provider_attempts + 1):
             with _worktree(repository, commit) as stage_tree:
@@ -436,11 +457,22 @@ def optimize(
             fresh_candidates: list[OptimizationCandidate] = []
             used_ids = {item.candidate.candidate_id for item in evaluations}
             for candidate in candidates:
-                patch_hash = hashlib.sha256(candidate.patch.encode()).hexdigest()
-                patch_key = (baseline_state, patch_hash)
-                if patch_key in seen_patches:
-                    continue
-                seen_patches.add(patch_key)
+                try:
+                    with _worktree(repository, commit) as candidate_state_tree:
+                        _apply_candidate_sequence(
+                            candidate_state_tree, tuple(accepted_sequence)
+                        )
+                        apply_patch(candidate_state_tree, candidate.patch)
+                        candidate_state = _optimization_state_id(candidate_state_tree)
+                except (PatchValidationError, RuntimeError):
+                    # Invalid patches still need to reach evaluation so their
+                    # concrete failure is preserved as refinement feedback.
+                    candidate_state = None
+                if candidate_state is not None:
+                    state_key = (baseline_state, candidate_state)
+                    if state_key in seen_resulting_states:
+                        continue
+                    seen_resulting_states.add(state_key)
                 if candidate.candidate_id in used_ids:
                     candidate = replace(
                         candidate,
@@ -596,7 +628,9 @@ def optimize(
             selected = accepted[0]
             assert selected.result is not None
             accepted_sequence.append(selected.candidate)
-            resulting_state = _optimization_state_id(commit, tuple(accepted_sequence))
+            with _worktree(repository, commit) as resulting_tree:
+                _apply_candidate_sequence(resulting_tree, tuple(accepted_sequence))
+                resulting_state = _optimization_state_id(resulting_tree)
             assert original_baseline_seconds is not None
             stages.append(
                 OptimizationStage(
@@ -715,7 +749,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=6,
+        schema_version=7,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,

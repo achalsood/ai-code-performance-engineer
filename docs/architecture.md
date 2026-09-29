@@ -120,10 +120,7 @@ Git baseline
    ...
 ```
 
-An optimization state is derived deterministically from the baseline commit and accepted candidate
-sequence. Each promoted stage records its `baseline_state` and `resulting_state`. Candidate
-evaluations record the state they were measured against together with their stage and provider
-attempt numbers.
+An optimization state is the content-addressed Git tree produced by the current worktree. The engine builds the tree through a temporary Git index, so tracked modifications, deletions, file modes, binary content, and newly created non-ignored files all contribute to the identity without mutating the worktree's real index. Clean baselines therefore retain their actual tree identity rather than collapsing to an empty-diff hash. Each promoted stage records its `baseline_state` and `resulting_state`. Candidate evaluations record the state they were measured against together with their stage and provider attempt numbers.
 
 This is deliberately different from treating A, B, and A+B as sequential stages. A, B, and A+B
 may be *alternatives within one stage*. Only a candidate that passes the evidence gates is promoted;
@@ -169,10 +166,7 @@ A newly promoted state starts with fresh analysis and fresh stage-local feedback
 
 ## Candidate identity and deduplication
 
-Candidate IDs are kept unique across the run for provenance. Patch deduplication is keyed by both
-the current optimization state and the patch hash. This prevents repeated benchmarking of the same
-patch against the same state while allowing a patch shape to be reconsidered after cumulative
-source changes make it a genuinely different experiment.
+Candidate IDs are kept unique across the run for provenance. Valid candidates are applied to the current promoted state and identified by their resulting Git tree before expensive correctness and benchmark execution. Deduplication is keyed by both the baseline state and resulting state. This suppresses textually different patches that produce identical repository content from the same baseline while allowing an equivalent resulting tree to be reconsidered when reached from a genuinely different baseline. Invalid patches are not semantically deduplicated before evaluation so their concrete validation failures remain available as provider-refinement feedback.
 
 ## Evidence and attribution
 
@@ -244,7 +238,7 @@ without requiring consumers to replay intermediate candidate patches.
 
 ## Persistence and provenance
 
-Optimization runs are serialized as versioned JSON records. A run captures the baseline commit,
+Optimization runs are serialized as versioned JSON records. Schema version 7 records the content-addressed state semantics introduced after v1.1.0. A run captures the baseline commit,
 environment fingerprint, baseline measurements, optional baseline profile, all candidate
 evaluations, provider-attempt count, promoted stages, winner, final verification, and composed
 patch.

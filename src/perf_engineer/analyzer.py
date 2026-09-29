@@ -44,6 +44,17 @@ def _scope_set_names(scope: ast.AST) -> set[str]:
             names.update(
                 target.id for target in node.targets if isinstance(target, ast.Name)
             )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            annotation = node.annotation
+            if (
+                isinstance(annotation, ast.Name)
+                and annotation.id in {"set", "frozenset"}
+            ) or (
+                isinstance(annotation, ast.Subscript)
+                and isinstance(annotation.value, ast.Name)
+                and annotation.value.id in {"set", "frozenset"}
+            ):
+                names.add(node.target.id)
     return names
 
 

@@ -213,6 +213,114 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
 
 
+def test_deduplicates_different_patches_that_produce_same_resulting_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    first_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+    second_patch = """diff --git a/workload.py b/workload.py
+index 6247b45..f91996d 100644
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+
+    class EquivalentProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            return [
+                OptimizationCandidate("first", "First", "Equivalent result", first_patch),
+                OptimizationCandidate("second", "Second", "Equivalent result", second_patch),
+            ]
+
+    baseline = BenchmarkResult(
+        ("python", "workload.py"), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: False)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=EquivalentProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
+    )
+
+    assert [evaluation.candidate.candidate_id for evaluation in result.evaluations] == ["first"]
+
+
+def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class InvalidProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            return [
+                OptimizationCandidate(
+                    "invalid",
+                    "Invalid patch",
+                    "Exercise refinement feedback",
+                    "not a unified diff",
+                )
+            ]
+
+    baseline = BenchmarkResult(
+        ("python", "workload.py"), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=InvalidProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=2,
+        maximum_optimization_stages=1,
+    )
+
+    assert result.provider_attempts == 2
+    assert len(result.evaluations) == 2
+    assert [evaluation.status for evaluation in result.evaluations] == ["invalid", "invalid"]
+    assert [evaluation.attempt_number for evaluation in result.evaluations] == [1, 2]
+
+
 def test_exhausts_stage_attempts_without_looping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -326,6 +434,116 @@ def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> No
     assert (repository / "workload.py").read_text(encoding="utf-8") == (
         "value = 10\nother = 20\n"
     )
+
+
+def test_optimization_state_identity_tracks_content_not_candidate_metadata(
+    tmp_path: Path,
+) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    first = OptimizationCandidate(
+        "provider-a",
+        "First metadata",
+        "First rationale",
+        """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+""",
+    )
+    second = OptimizationCandidate(
+        "provider-b",
+        "Different metadata",
+        "Different rationale",
+        first.patch,
+    )
+
+    first_tree = tmp_path / "first"
+    second_tree = tmp_path / "second"
+    subprocess.run(["git", "clone", "-q", str(repository), str(first_tree)], check=True)
+    subprocess.run(["git", "clone", "-q", str(repository), str(second_tree)], check=True)
+    optimizer._apply_candidate_sequence(first_tree, (first,))
+    optimizer._apply_candidate_sequence(second_tree, (second,))
+
+    first_state = optimizer._optimization_state_id(first_tree)
+    second_state = optimizer._optimization_state_id(second_tree)
+
+    assert first_state == second_state
+    assert first_state != baseline_state
+
+
+def test_optimization_state_identity_changes_with_resulting_content(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    (repository / "workload.py").write_text("value = 2\n", encoding="utf-8")
+    changed_state = optimizer._optimization_state_id(repository)
+
+    assert changed_state != baseline_state
+
+
+def test_optimization_state_identity_includes_untracked_files(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    (repository / "helper.py").write_text("answer = 42\n", encoding="utf-8")
+
+    assert optimizer._optimization_state_id(repository) != baseline_state
+
+
+def test_optimization_state_identity_distinguishes_committed_baselines(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    workload = repository / "workload.py"
+    workload.write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "first baseline"], check=True)
+    first_state = optimizer._optimization_state_id(repository)
+
+    workload.write_text("value = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "second baseline"], check=True)
+
+    assert optimizer._optimization_state_id(repository) != first_state
 
 
 def test_cumulative_speedup_is_measured_from_original_baseline() -> None:
@@ -831,7 +1049,15 @@ assert len(ranked) == 250
     combined = result.evaluations[2]
     assert "_perf_membership_0" in combined.candidate.patch
     assert "_perf_invariant_0" in combined.candidate.patch
-    assert combined.status == "accept"
+    assert combined.status == "accept", (
+        f"status={combined.status}; "
+        f"reason={combined.result.reason if combined.result else combined.error}; "
+        f"speedup={combined.result.speedup_percent if combined.result else 'n/a'}; "
+        f"ci95=[{combined.result.speedup_ci95_low if combined.result else 'n/a'}, "
+        f"{combined.result.speedup_ci95_high if combined.result else 'n/a'}]; "
+        f"memory_change={combined.result.memory_change_percent if combined.result else 'n/a'}; "
+        f"cpu_change={combined.result.cpu_change_percent if combined.result else 'n/a'}"
+    )
     assert combined.result is not None
     assert combined.result.correctness_passed
     assert combined.result.speedup_percent >= 5.0

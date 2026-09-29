@@ -5,6 +5,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Optimization-state identities are now content-addressed Git tree IDs, covering committed baseline content, tracked changes, deletions, modes, binary data, and newly created non-ignored files without mutating the real Git index.
+- Candidate deduplication now compares resulting repository states within each baseline state, so textually different patches that produce identical content are benchmarked only once while invalid candidates retain refinement feedback.
+- Optimization records now use schema version 7 to reflect the new state-identity semantics.
+- The `counter-frequency` corpus workload is bounded while preserving its repeated-count versus indexed-frequency comparison, reducing the risk of benchmark subprocesses reaching CI CPU limits.
+
 ## [1.1.0] - 2026-09-26
 
 ### Added
