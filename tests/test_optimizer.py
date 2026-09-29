@@ -198,6 +198,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert result.final_verification.candidate.median_seconds < (
         result.final_verification.baseline.median_seconds * 0.5
     )
+    assert "Promoted 2 stage(s): first -> second." in result.explanation
+    assert "Final verification accept:" in result.explanation
+    assert "correctness=passed" in result.explanation
 
     exported = export_winning_patch(result, tmp_path / "cumulative.patch")
     assert exported is not None
@@ -403,6 +406,8 @@ def test_exhausts_stage_attempts_without_looping(
     assert all(evaluation.status == "invalid" for evaluation in result.evaluations)
     assert result.stages == ()
     assert result.winner_id is None
+    assert "No optimization was promoted." in result.explanation
+    assert "3 invalid" in result.explanation
 
 
 def test_rejects_zero_optimization_stages(tmp_path: Path) -> None:
