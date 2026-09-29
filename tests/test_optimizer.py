@@ -270,6 +270,13 @@ index 6247b45..f91996d 100644
     )
 
     assert [evaluation.candidate.candidate_id for evaluation in result.evaluations] == ["first"]
+    explanation = result.evaluations[0].explanation
+    assert explanation is not None
+    assert explanation.decision == "reject"
+    assert explanation.correctness_passed is False
+    assert explanation.speedup_percent is None
+    assert explanation.changed_paths == ("workload.py",)
+    assert "performance was not measured" in explanation.summary
 
 
 def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
