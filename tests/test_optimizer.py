@@ -505,6 +505,47 @@ def test_optimization_state_identity_changes_with_resulting_content(tmp_path: Pa
     assert changed_state != baseline_state
 
 
+def test_optimization_state_identity_includes_untracked_files(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    (repository / "helper.py").write_text("answer = 42\n", encoding="utf-8")
+
+    assert optimizer._optimization_state_id(repository) != baseline_state
+
+
+def test_optimization_state_identity_distinguishes_committed_baselines(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    workload = repository / "workload.py"
+    workload.write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "first baseline"], check=True)
+    first_state = optimizer._optimization_state_id(repository)
+
+    workload.write_text("value = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "second baseline"], check=True)
+
+    assert optimizer._optimization_state_id(repository) != first_state
+
+
 def test_cumulative_speedup_is_measured_from_original_baseline() -> None:
     import perf_engineer.optimizer as optimizer
 
