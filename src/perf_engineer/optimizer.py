@@ -445,14 +445,14 @@ def optimize(
                         apply_patch(candidate_state_tree, candidate.patch)
                         candidate_state = _optimization_state_id(candidate_state_tree)
                 except (PatchValidationError, RuntimeError):
-                    candidate_state = (
-                        "invalid:"
-                        + hashlib.sha256(candidate.patch.encode()).hexdigest()[:16]
-                    )
-                state_key = (baseline_state, candidate_state)
-                if state_key in seen_resulting_states:
-                    continue
-                seen_resulting_states.add(state_key)
+                    # Invalid patches still need to reach evaluation so their
+                    # concrete failure is preserved as refinement feedback.
+                    candidate_state = None
+                if candidate_state is not None:
+                    state_key = (baseline_state, candidate_state)
+                    if state_key in seen_resulting_states:
+                        continue
+                    seen_resulting_states.add(state_key)
                 if candidate.candidate_id in used_ids:
                     candidate = replace(
                         candidate,
