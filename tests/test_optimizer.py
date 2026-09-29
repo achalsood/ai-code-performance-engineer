@@ -319,6 +319,17 @@ def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
     assert len(result.evaluations) == 2
     assert [evaluation.status for evaluation in result.evaluations] == ["invalid", "invalid"]
     assert [evaluation.attempt_number for evaluation in result.evaluations] == [1, 2]
+    assert all(evaluation.explanation is not None for evaluation in result.evaluations)
+    assert all(
+        evaluation.explanation.decision == "invalid"
+        for evaluation in result.evaluations
+        if evaluation.explanation is not None
+    )
+    assert all(
+        evaluation.explanation.speedup_percent is None
+        for evaluation in result.evaluations
+        if evaluation.explanation is not None
+    )
 
 
 def test_exhausts_stage_attempts_without_looping(
@@ -733,6 +744,20 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert attribution.baseline_wall_seconds > attribution.candidate_wall_seconds
     assert attribution.wall_change_percent < 0
     assert attribution.confidence in {"medium", "high"}
+    explanation = result.evaluations[0].explanation
+    assert explanation is not None
+    assert explanation.decision == "accept"
+    assert explanation.correctness_passed
+    assert explanation.targeted_issue == "Less work"
+    assert explanation.strategy == "unspecified"
+    assert explanation.changed_paths == ("workload.py",)
+    assert explanation.speedup_percent is not None
+    assert explanation.speedup_percent > 5.0
+    assert explanation.speedup_ci95_low is not None
+    assert explanation.baseline_wall_seconds is not None
+    assert explanation.candidate_wall_seconds is not None
+    assert "ACCEPT:" in explanation.summary
+    assert result.schema_version == 8
 
 
 @pytest.mark.performance
