@@ -119,7 +119,10 @@ class PerformanceVisitor(ast.NodeVisitor):
         function_name = node.func.id if isinstance(node.func, ast.Name) else None
         loop_bound_names = set().union(*self._loop_bound_names) if self._loop_bound_names else set()
         call_depends_on_loop_value = any(
-            isinstance(argument, ast.Name) and argument.id in loop_bound_names
+            any(
+                isinstance(part, ast.Name) and part.id in loop_bound_names
+                for part in ast.walk(argument)
+            )
             for argument in node.args
         )
         if (
