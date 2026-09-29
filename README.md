@@ -30,6 +30,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Cumulative multi-stage optimization that re-analyzes each promoted state before generating the next alternatives
 - Direct original-vs-final verification and reproducible unified final patch export
 - Content-addressed Git-tree optimization-state identities with stage/attempt provenance for every evaluated candidate
+- Structured per-candidate explanations covering target evidence, strategy, changed paths, correctness, measured deltas, confidence, and decision rationale
 
 ## Quick start
 
