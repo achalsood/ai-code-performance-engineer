@@ -239,6 +239,8 @@ After the final promoted stage, the engine reconstructs the complete accepted se
 isolated worktree, reruns correctness, directly benchmarks the original repository against the
 final cumulative state, and exports one reproducible original-to-final unified diff.
 
+For a deeper description of optimization states, stage/attempt semantics, evidence flow, worktree isolation, final cumulative verification, and module boundaries, see [docs/architecture.md](docs/architecture.md).
+
 ## Engineering principles
 
 1. Never treat model output as proof.
