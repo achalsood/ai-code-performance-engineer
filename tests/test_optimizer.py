@@ -272,6 +272,55 @@ index 6247b45..f91996d 100644
     assert [evaluation.candidate.candidate_id for evaluation in result.evaluations] == ["first"]
 
 
+def test_repeated_invalid_patch_is_retained_for_each_refinement_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class InvalidProvider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            return [
+                OptimizationCandidate(
+                    "invalid",
+                    "Invalid patch",
+                    "Exercise refinement feedback",
+                    "not a unified diff",
+                )
+            ]
+
+    baseline = BenchmarkResult(
+        ("python", "workload.py"), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    monkeypatch.setattr(optimizer, "run_benchmark", lambda *args, **kwargs: baseline)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=InvalidProvider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=2,
+        maximum_optimization_stages=1,
+    )
+
+    assert result.provider_attempts == 2
+    assert len(result.evaluations) == 2
+    assert [evaluation.status for evaluation in result.evaluations] == ["invalid", "invalid"]
+    assert [evaluation.attempt_number for evaluation in result.evaluations] == [1, 2]
+
+
 def test_exhausts_stage_attempts_without_looping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
