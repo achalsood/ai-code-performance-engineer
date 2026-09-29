@@ -62,3 +62,15 @@ def test_ignores_membership_in_set_built_from_comprehension(tmp_path: Path) -> N
         "        print(candidate)\n"
     )
     assert "PERF004" not in {finding.rule_id for finding in analyze_file(source)}
+
+
+def test_ignores_membership_in_annotated_set_inside_loop(tmp_path: Path) -> None:
+    source = tmp_path / "safe.py"
+    source.write_text(
+        "seen: set[tuple[str, str]] = set()\n"
+        "for candidate in candidates:\n"
+        "    key = (baseline_state, candidate_state)\n"
+        "    if key in seen:\n"
+        "        continue\n"
+    )
+    assert "PERF004" not in {finding.rule_id for finding in analyze_file(source)}
