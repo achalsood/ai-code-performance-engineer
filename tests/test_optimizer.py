@@ -174,6 +174,10 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert second_result.baseline.median_seconds < 0.18
     assert result.winner_id == "second"
     assert [stage.candidate_id for stage in result.stages] == ["first", "second"]
+    assert all(stage.promotion_reason for stage in result.stages)
+    assert result.stages[0].alternatives_considered == ("first",)
+    assert result.stages[1].alternatives_considered == ("second",)
+    assert "highest utility score" in result.stages[0].promotion_reason
     assert [
         (evaluation.stage_number, evaluation.attempt_number)
         for evaluation in result.evaluations
