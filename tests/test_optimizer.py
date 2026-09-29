@@ -328,6 +328,75 @@ def test_applies_compatible_candidates_as_cumulative_state(tmp_path: Path) -> No
     )
 
 
+def test_optimization_state_identity_tracks_content_not_candidate_metadata(
+    tmp_path: Path,
+) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    first = OptimizationCandidate(
+        "provider-a",
+        "First metadata",
+        "First rationale",
+        """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+""",
+    )
+    second = OptimizationCandidate(
+        "provider-b",
+        "Different metadata",
+        "Different rationale",
+        first.patch,
+    )
+
+    first_tree = tmp_path / "first"
+    second_tree = tmp_path / "second"
+    subprocess.run(["git", "clone", "-q", str(repository), str(first_tree)], check=True)
+    subprocess.run(["git", "clone", "-q", str(repository), str(second_tree)], check=True)
+    optimizer._apply_candidate_sequence(first_tree, (first,))
+    optimizer._apply_candidate_sequence(second_tree, (second,))
+
+    first_state = optimizer._optimization_state_id(first_tree)
+    second_state = optimizer._optimization_state_id(second_tree)
+
+    assert first_state == second_state
+    assert first_state != baseline_state
+
+
+def test_optimization_state_identity_changes_with_resulting_content(tmp_path: Path) -> None:
+    import perf_engineer.optimizer as optimizer
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    baseline_state = optimizer._optimization_state_id(repository)
+    (repository / "workload.py").write_text("value = 2\n", encoding="utf-8")
+    changed_state = optimizer._optimization_state_id(repository)
+
+    assert changed_state != baseline_state
+
+
 def test_cumulative_speedup_is_measured_from_original_baseline() -> None:
     import perf_engineer.optimizer as optimizer
 
