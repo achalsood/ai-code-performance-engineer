@@ -27,6 +27,26 @@ from .verification import compare, run_correctness
 
 
 @dataclass(frozen=True)
+class OptimizationExplanation:
+    summary: str
+    targeted_issue: str
+    strategy: str
+    evidence_ids: tuple[str, ...]
+    changed_paths: tuple[str, ...]
+    decision: str
+    reason: str
+    correctness_passed: bool | None
+    confidence: str
+    baseline_wall_seconds: float | None = None
+    candidate_wall_seconds: float | None = None
+    speedup_percent: float | None = None
+    speedup_ci95_low: float | None = None
+    speedup_ci95_high: float | None = None
+    cpu_change_percent: float | None = None
+    memory_change_percent: float | None = None
+
+
+@dataclass(frozen=True)
 class CandidateEvaluation:
     candidate: OptimizationCandidate
     status: str
@@ -38,6 +58,7 @@ class CandidateEvaluation:
     baseline_state: str | None = None
     stage_number: int | None = None
     attempt_number: int | None = None
+    explanation: OptimizationExplanation | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +124,60 @@ def _attribution(
         stable=result.stable,
         confidence=confidence,
         decision=result.decision,
+    )
+
+
+def _explanation(
+    candidate: OptimizationCandidate,
+    request: OptimizationRequest,
+    *,
+    decision: str,
+    reason: str,
+    changed_paths: tuple[str, ...],
+    result: VerificationResult | None = None,
+    attribution: PerformanceAttribution | None = None,
+    correctness_passed: bool | None = None,
+) -> OptimizationExplanation:
+    targeted_issue = (
+        attribution.targeted_issue if attribution else _evidence_label(candidate, request)
+    )
+    confidence = attribution.confidence if attribution else "unmeasured"
+    if result is not None:
+        correctness_passed = result.correctness_passed
+        summary = (
+            f"{decision.upper()}: {candidate.strategy} targeted {targeted_issue}; "
+            f"measured {result.speedup_percent:.2f}% speedup "
+            f"(95% CI {result.speedup_ci95_low:.2f}% to {result.speedup_ci95_high:.2f}%). "
+            f"{reason}"
+        )
+    else:
+        summary = (
+            f"{decision.upper()}: {candidate.strategy} targeted {targeted_issue}; "
+            f"performance was not measured. {reason}"
+        )
+    return OptimizationExplanation(
+        summary=summary,
+        targeted_issue=targeted_issue,
+        strategy=candidate.strategy,
+        evidence_ids=candidate.target_evidence_ids,
+        changed_paths=changed_paths,
+        decision=decision,
+        reason=reason,
+        correctness_passed=correctness_passed,
+        confidence=confidence,
+        baseline_wall_seconds=(
+            result.baseline.median_seconds if result is not None else None
+        ),
+        candidate_wall_seconds=(
+            result.candidate.median_seconds if result is not None else None
+        ),
+        speedup_percent=result.speedup_percent if result is not None else None,
+        speedup_ci95_low=result.speedup_ci95_low if result is not None else None,
+        speedup_ci95_high=result.speedup_ci95_high if result is not None else None,
+        cpu_change_percent=result.cpu_change_percent if result is not None else None,
+        memory_change_percent=(
+            result.memory_change_percent if result is not None else None
+        ),
     )
 
 
