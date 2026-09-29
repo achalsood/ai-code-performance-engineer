@@ -20,7 +20,12 @@ from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
 from .models import BenchmarkResult, Decision, PerformanceAttribution, VerificationResult
 from .patches import PatchValidationError, apply_patch
 from .profiling import CProfileAdapter, ProfileResult, ProfilingError
-from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
+from .providers import (
+    CandidateProvider,
+    OptimizationCandidate,
+    OptimizationPlanStep,
+    OptimizationRequest,
+)
 from .redaction import redact_secrets
 from .repository import resolve_commit
 from .verification import compare, run_correctness
@@ -325,6 +330,44 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
             )
 
 
+def _optimization_plan(
+    findings: tuple[object, ...],
+    hotspots: tuple[object, ...],
+) -> tuple[OptimizationPlanStep, ...]:
+    steps: list[OptimizationPlanStep] = []
+    priority = 1
+    for hotspot in hotspots[:5]:
+        evidence_id = (
+            f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+        )
+        steps.append(
+            OptimizationPlanStep(
+                priority=priority,
+                evidence_id=evidence_id,
+                rationale=(
+                    f"Measured hotspot with {hotspot.cumulative_seconds:.6f}s cumulative "
+                    f"across {hotspot.calls} call(s)."
+                ),
+                expected_strategy="reduce measured hot-path work",
+            )
+        )
+        priority += 1
+    for finding in findings:
+        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
+        if any(step.evidence_id == evidence_id for step in steps):
+            continue
+        steps.append(
+            OptimizationPlanStep(
+                priority=priority,
+                evidence_id=evidence_id,
+                rationale=f"{finding.severity} severity: {finding.message}",
+                expected_strategy=finding.suggestion,
+            )
+        )
+        priority += 1
+    return tuple(steps[:10])
+
+
 def _request(
     repository: Path,
     worktree: Path,
@@ -420,6 +463,7 @@ def _request(
         redaction_counts=redaction_counts,
         optimization_hints=optimization_hints,
         hotspots=tuple(project_hotspots),
+        plan=_optimization_plan(findings, tuple(project_hotspots)),
     )
 
 
