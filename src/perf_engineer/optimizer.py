@@ -142,18 +142,17 @@ def _cumulative_speedup_percent(original_seconds: float, current_seconds: float)
     return ((original_seconds - current_seconds) / original_seconds) * 100.0
 
 
-def _optimization_state_id(
-    baseline_commit: str,
-    candidates: tuple[OptimizationCandidate, ...],
-) -> str:
-    digest = hashlib.sha256()
-    digest.update(baseline_commit.encode())
-    for candidate in candidates:
-        digest.update(b"\0")
-        digest.update(candidate.candidate_id.encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(candidate.patch.encode()).digest())
-    return f"state:{digest.hexdigest()[:16]}"
+def _optimization_state_id(worktree: Path) -> str:
+    """Return a content-addressed identity for the current repository state."""
+    result = subprocess.run(
+        ["git", "-C", str(worktree), "diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr.decode(errors="replace").strip())
+    digest = hashlib.sha256(result.stdout).hexdigest()
+    return f"state:{digest[:16]}"
 
 
 def _git(repository: Path, *arguments: str) -> None:
@@ -402,7 +401,9 @@ def optimize(
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
         promoted = False
-        baseline_state = _optimization_state_id(commit, tuple(accepted_sequence))
+        with _worktree(repository, commit) as state_tree:
+            _apply_candidate_sequence(state_tree, tuple(accepted_sequence))
+            baseline_state = _optimization_state_id(state_tree)
 
         for stage_attempt in range(1, maximum_provider_attempts + 1):
             with _worktree(repository, commit) as stage_tree:
@@ -596,7 +597,9 @@ def optimize(
             selected = accepted[0]
             assert selected.result is not None
             accepted_sequence.append(selected.candidate)
-            resulting_state = _optimization_state_id(commit, tuple(accepted_sequence))
+            with _worktree(repository, commit) as resulting_tree:
+                _apply_candidate_sequence(resulting_tree, tuple(accepted_sequence))
+                resulting_state = _optimization_state_id(resulting_tree)
             assert original_baseline_seconds is not None
             stages.append(
                 OptimizationStage(
