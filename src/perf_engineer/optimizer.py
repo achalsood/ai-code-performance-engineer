@@ -584,16 +584,25 @@ def optimize(
                                 policy=selected_policy,
                             )
                             if not correctness:
+                                reason = "candidate failed the correctness command"
                                 evaluation = CandidateEvaluation(
                                     candidate,
                                     Decision.REJECT.value,
                                     None,
-                                    "candidate failed the correctness command",
+                                    reason,
                                     changed_paths,
                                     0.0,
                                     baseline_state=baseline_state,
                                     stage_number=stage_number,
                                     attempt_number=stage_attempt,
+                                    explanation=_explanation(
+                                        candidate,
+                                        request,
+                                        decision=Decision.REJECT.value,
+                                        reason=reason,
+                                        changed_paths=changed_paths,
+                                        correctness_passed=False,
+                                    ),
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -636,6 +645,7 @@ def optimize(
                             ),
                             maximum_cpu_regression_percent=maximum_cpu_regression_percent,
                         )
+                        attribution = _attribution(candidate, result, request)
                         evaluation = CandidateEvaluation(
                             candidate,
                             result.decision.value,
@@ -643,10 +653,19 @@ def optimize(
                             None,
                             changed_paths,
                             result.utility_score,
-                            _attribution(candidate, result, request),
+                            attribution,
                             baseline_state=baseline_state,
                             stage_number=stage_number,
                             attempt_number=stage_attempt,
+                            explanation=_explanation(
+                                candidate,
+                                request,
+                                decision=result.decision.value,
+                                reason=result.reason,
+                                changed_paths=changed_paths,
+                                result=result,
+                                attribution=attribution,
+                            ),
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -660,16 +679,24 @@ def optimize(
                                 },
                             )
                 except (PatchValidationError, OSError, RuntimeError, ValueError) as exc:
+                    reason = str(exc)
                     evaluation = CandidateEvaluation(
                         candidate,
                         "invalid",
                         None,
-                        str(exc),
+                        reason,
                         (),
                         0.0,
                         baseline_state=baseline_state,
                         stage_number=stage_number,
                         attempt_number=stage_attempt,
+                        explanation=_explanation(
+                            candidate,
+                            request,
+                            decision="invalid",
+                            reason=reason,
+                            changed_paths=(),
+                        ),
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
@@ -824,7 +851,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=7,
+        schema_version=8,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
