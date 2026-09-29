@@ -1008,7 +1008,15 @@ assert len(ranked) == 250
     combined = result.evaluations[2]
     assert "_perf_membership_0" in combined.candidate.patch
     assert "_perf_invariant_0" in combined.candidate.patch
-    assert combined.status == "accept"
+    assert combined.status == "accept", (
+        f"status={combined.status}; "
+        f"reason={combined.result.reason if combined.result else combined.error}; "
+        f"speedup={combined.result.speedup_percent if combined.result else 'n/a'}; "
+        f"ci95=[{combined.result.speedup_ci95_low if combined.result else 'n/a'}, "
+        f"{combined.result.speedup_ci95_high if combined.result else 'n/a'}]; "
+        f"memory_change={combined.result.memory_change_percent if combined.result else 'n/a'}; "
+        f"cpu_change={combined.result.cpu_change_percent if combined.result else 'n/a'}"
+    )
     assert combined.result is not None
     assert combined.result.correctness_passed
     assert combined.result.speedup_percent >= 5.0
