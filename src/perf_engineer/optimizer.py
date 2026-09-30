@@ -29,6 +29,7 @@ from .profiling import CProfileAdapter, Hotspot, ProfileResult, ProfilingError
 from .providers import (
     CandidateProvider,
     OptimizationCandidate,
+    OptimizationPlanRelation,
     OptimizationPlanStep,
     OptimizationRequest,
 )
@@ -111,6 +112,150 @@ def _plan_priorities(
                 if evidence_id in priorities
             }
         )
+    )
+
+
+
+def _state_transition_relations(
+    previous_plan: tuple[OptimizationPlanStep, ...],
+    current_plan: tuple[OptimizationPlanStep, ...],
+    source_evidence_ids: tuple[str, ...],
+) -> tuple[OptimizationPlanRelation, ...]:
+    if not source_evidence_ids:
+        return ()
+    previous_ids = {step.evidence_id for step in previous_plan}
+    current_ids = {step.evidence_id for step in current_plan}
+    relations: list[OptimizationPlanRelation] = []
+
+    for evidence_id in sorted(previous_ids - current_ids - set(source_evidence_ids)):
+        relations.append(
+            OptimizationPlanRelation(
+                kind="subsumes",
+                source_evidence_ids=source_evidence_ids,
+                affected_evidence_id=evidence_id,
+                rationale=(
+                    "Evidence disappeared after promoting the source optimization "
+                    "without being directly targeted."
+                ),
+            )
+        )
+    for evidence_id in sorted(current_ids - previous_ids):
+        relations.append(
+            OptimizationPlanRelation(
+                kind="enables",
+                source_evidence_ids=source_evidence_ids,
+                affected_evidence_id=evidence_id,
+                rationale=(
+                    "Evidence appeared only after promoting the source optimization."
+                ),
+            )
+        )
+    return tuple(relations)
+
+
+
+def _candidate_conflict_relations(
+    *,
+    repository: Path,
+    commit: str,
+    accepted_sequence: tuple[OptimizationCandidate, ...],
+    evaluations: tuple[CandidateEvaluation, ...],
+    test_command: list[str],
+    runner: CommandRunner,
+    policy: ExecutionPolicy,
+) -> tuple[OptimizationPlanRelation, ...]:
+    relations: list[OptimizationPlanRelation] = []
+    accepted = [
+        evaluation
+        for evaluation in evaluations
+        if evaluation.result is not None
+        and evaluation.result.decision is Decision.ACCEPT
+        and evaluation.candidate.target_evidence_ids
+    ]
+    for left_index, left in enumerate(accepted):
+        for right in accepted[left_index + 1 :]:
+            left_evidence = tuple(dict.fromkeys(left.candidate.target_evidence_ids))
+            right_evidence = tuple(dict.fromkeys(right.candidate.target_evidence_ids))
+            if set(left_evidence) & set(right_evidence):
+                continue
+
+            compatible = False
+            for first, second in (
+                (left.candidate, right.candidate),
+                (right.candidate, left.candidate),
+            ):
+                try:
+                    with _worktree(repository, commit) as combined_tree:
+                        _apply_candidate_sequence(combined_tree, accepted_sequence)
+                        apply_patch(combined_tree, first.patch)
+                        apply_patch(combined_tree, second.patch)
+                        compatible = run_correctness(
+                            test_command,
+                            cwd=combined_tree,
+                            runner=runner,
+                            policy=policy,
+                        )
+                except (PatchValidationError, OSError, RuntimeError, ValueError):
+                    compatible = False
+                if compatible:
+                    break
+
+            if compatible:
+                continue
+
+            rationale = (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            )
+            for source_ids, affected_ids in (
+                (left_evidence, right_evidence),
+                (right_evidence, left_evidence),
+            ):
+                for affected_id in affected_ids:
+                    relations.append(
+                        OptimizationPlanRelation(
+                            kind="conflicts",
+                            source_evidence_ids=source_ids,
+                            affected_evidence_id=affected_id,
+                            rationale=rationale,
+                        )
+                    )
+    return tuple(relations)
+
+
+
+def _apply_plan_relations(
+    plan: tuple[OptimizationPlanStep, ...],
+    relations: tuple[OptimizationPlanRelation, ...],
+    promoted_evidence_ids: set[str],
+) -> tuple[OptimizationPlanStep, ...]:
+    if not plan or not promoted_evidence_ids:
+        return plan
+
+    blocked = {
+        relation.affected_evidence_id
+        for relation in relations
+        if relation.kind == "conflicts"
+        and promoted_evidence_ids.intersection(relation.source_evidence_ids)
+    }
+    enabled = {
+        relation.affected_evidence_id
+        for relation in relations
+        if relation.kind == "enables"
+        and promoted_evidence_ids.intersection(relation.source_evidence_ids)
+    }
+
+    surviving = [step for step in plan if step.evidence_id not in blocked]
+    surviving.sort(
+        key=lambda step: (
+            0 if step.evidence_id in enabled else 1,
+            step.priority,
+            step.evidence_id,
+        )
+    )
+    return tuple(
+        replace(step, priority=index)
+        for index, step in enumerate(surviving, start=1)
     )
 
 
@@ -234,6 +379,7 @@ class OptimizationRun:
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
     explanation: str = ""
+    plan_relations: tuple[OptimizationPlanRelation, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -666,6 +812,10 @@ def optimize(
     original_baseline_seconds: float | None = None
     provider_attempts = 0
     seen_resulting_states: set[tuple[str, str]] = set()
+    plan_relations: list[OptimizationPlanRelation] = []
+    previous_plan: tuple[OptimizationPlanStep, ...] | None = None
+    previous_stage_evidence_ids: tuple[str, ...] = ()
+    promoted_evidence_ids: set[str] = set()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
@@ -692,8 +842,23 @@ def optimize(
                     except ProfilingError:
                         stage_profile = None
                 request = _request(repository, stage_tree, maximum_candidates, stage_profile)
+                if stage_attempt == 1 and previous_plan is not None:
+                    learned = _state_transition_relations(
+                        previous_plan,
+                        request.plan,
+                        previous_stage_evidence_ids,
+                    )
+                    plan_relations.extend(
+                        relation for relation in learned if relation not in plan_relations
+                    )
                 request = replace(
                     request,
+                    plan=_apply_plan_relations(
+                        request.plan,
+                        tuple(plan_relations),
+                        promoted_evidence_ids,
+                    ),
+                    plan_relations=tuple(plan_relations),
                     attempt_number=stage_attempt,
                     feedback=_candidate_feedback(stage_evaluations),
                     optimization_hints=(
@@ -892,6 +1057,18 @@ def optimize(
                     item.candidate.candidate_id,
                 )
             )
+            conflict_relations = _candidate_conflict_relations(
+                repository=repository,
+                commit=commit,
+                accepted_sequence=tuple(accepted_sequence),
+                evaluations=tuple(attempt_evaluations),
+                test_command=test_command,
+                runner=selected_runner,
+                policy=selected_policy,
+            )
+            plan_relations.extend(
+                relation for relation in conflict_relations if relation not in plan_relations
+            )
             if not accepted:
                 if stage_attempt < maximum_provider_attempts and audit_logger:
                     audit_logger.append(
@@ -939,6 +1116,9 @@ def optimize(
                     evidence_ids=selected.candidate.target_evidence_ids,
                 )
             )
+            previous_plan = request.plan
+            previous_stage_evidence_ids = selected.candidate.target_evidence_ids
+            promoted_evidence_ids.update(selected.candidate.target_evidence_ids)
             if audit_logger:
                 audit_logger.append(
                     "optimization_stage_promoted",
@@ -1042,7 +1222,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=9,
+        schema_version=10,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -1058,6 +1238,7 @@ def optimize(
         explanation=_run_explanation(
             tuple(stages), tuple(evaluations), final_verification
         ),
+        plan_relations=tuple(plan_relations),
     )
 
 

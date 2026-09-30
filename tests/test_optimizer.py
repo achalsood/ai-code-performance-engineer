@@ -15,6 +15,7 @@ from perf_engineer.optimizer import (
 from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import (
     OptimizationCandidate,
+    OptimizationPlanRelation,
     OptimizationPlanStep,
     OptimizationRequest,
 )
@@ -78,6 +79,183 @@ def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots(
     assert "near measured hotspot hot.py:12 work" in plan[0].rationale
     assert plan[0].expected_strategy == "hoist allocation"
     assert plan[2].expected_strategy == "reduce measured hot-path work"
+
+
+
+
+def test_state_transition_relations_learn_subsumes_and_enables() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    previous = (
+        OptimizationPlanStep(1, "finding:TARGET:a.py:1", "target", "optimize"),
+        OptimizationPlanStep(2, "finding:OLD:a.py:2", "old", "optimize"),
+    )
+    current = (
+        OptimizationPlanStep(1, "finding:NEW:a.py:3", "new", "optimize"),
+    )
+
+    relations = optimizer._state_transition_relations(
+        previous,
+        current,
+        ("finding:TARGET:a.py:1",),
+    )
+
+    assert relations == (
+        OptimizationPlanRelation(
+            "subsumes",
+            ("finding:TARGET:a.py:1",),
+            "finding:OLD:a.py:2",
+            (
+                "Evidence disappeared after promoting the source optimization "
+                "without being directly targeted."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:TARGET:a.py:1",),
+            "finding:NEW:a.py:3",
+            "Evidence appeared only after promoting the source optimization.",
+        ),
+    )
+
+
+
+
+def test_candidate_conflicts_are_learned_from_incompatible_accepted_states(
+    tmp_path: Path,
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.execution import ExecutionPolicy, LocalProcessRunner
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+    commit = subprocess.check_output(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+    left_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+    right_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 3
+"""
+    benchmark = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    accepted = VerificationResult(
+        Decision.ACCEPT, 10.0, True, True, "accepted", benchmark, benchmark
+    )
+    evaluations = (
+        optimizer.CandidateEvaluation(
+            OptimizationCandidate(
+                "left",
+                "Left",
+                "Left",
+                left_patch,
+                target_evidence_ids=("finding:LEFT:workload.py:1",),
+            ),
+            "accept",
+            accepted,
+            None,
+            ("workload.py",),
+        ),
+        optimizer.CandidateEvaluation(
+            OptimizationCandidate(
+                "right",
+                "Right",
+                "Right",
+                right_patch,
+                target_evidence_ids=("finding:RIGHT:workload.py:1",),
+            ),
+            "accept",
+            accepted,
+            None,
+            ("workload.py",),
+        ),
+    )
+
+    relations = optimizer._candidate_conflict_relations(
+        repository=repository,
+        commit=commit,
+        accepted_sequence=(),
+        evaluations=evaluations,
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        runner=LocalProcessRunner(),
+        policy=ExecutionPolicy(),
+    )
+
+    assert relations == (
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:LEFT:workload.py:1",),
+            "finding:RIGHT:workload.py:1",
+            (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:RIGHT:workload.py:1",),
+            "finding:LEFT:workload.py:1",
+            (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            ),
+        ),
+    )
+
+
+
+
+def test_plan_relations_prioritize_enabled_and_suppress_conflicts() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    plan = (
+        OptimizationPlanStep(1, "finding:COLD:a.py:1", "cold", "optimize"),
+        OptimizationPlanStep(2, "finding:ENABLED:a.py:2", "enabled", "optimize"),
+        OptimizationPlanStep(3, "finding:BLOCKED:a.py:3", "blocked", "optimize"),
+    )
+    relations = (
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:PROMOTED:a.py:0",),
+            "finding:ENABLED:a.py:2",
+            "enabled",
+        ),
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:PROMOTED:a.py:0",),
+            "finding:BLOCKED:a.py:3",
+            "conflict",
+        ),
+    )
+
+    adjusted = optimizer._apply_plan_relations(
+        plan,
+        relations,
+        {"finding:PROMOTED:a.py:0"},
+    )
+
+    assert [step.evidence_id for step in adjusted] == [
+        "finding:ENABLED:a.py:2",
+        "finding:COLD:a.py:1",
+    ]
+    assert [step.priority for step in adjusted] == [1, 2]
 
 
 
@@ -402,6 +580,111 @@ def test_promoted_stage_records_plan_step_provenance(
     assert result.stages[0].evidence_ids == ("finding:PERF002:workload.py:3",)
     assert "Planned objectives: stage 1: plan priorities 1" in result.explanation
     assert "finding:PERF002:workload.py:3" in result.explanation
+
+
+
+
+
+def test_next_stage_receives_learned_plan_relationships(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("state = 'before'\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    def fake_analyze(path: Path) -> list[Finding]:
+        source = (path / "workload.py").read_text(encoding="utf-8")
+        if "before" in source:
+            return [
+                Finding("TARGET", str(path / "workload.py"), 1, "high", "target", "optimize"),
+                Finding("OLD", str(path / "workload.py"), 2, "medium", "old", "optimize"),
+            ]
+        return [
+            Finding("NEW", str(path / "workload.py"), 3, "medium", "new", "optimize"),
+        ]
+
+    class Provider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
+            if "before" in request.files["workload.py"]:
+                patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-state = 'before'
++state = 'after'
+"""
+                return [
+                    OptimizationCandidate(
+                        "transition",
+                        "Transition state",
+                        "Exercise learned relationships",
+                        patch,
+                        target_evidence_ids=("finding:TARGET:workload.py:1",),
+                    )
+                ]
+            return []
+
+    baseline = BenchmarkResult(("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    candidate = BenchmarkResult(("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5)
+    accepted = VerificationResult(
+        Decision.ACCEPT, 50.0, True, True, "accepted", baseline, candidate, 40.0, 60.0
+    )
+    monkeypatch.setattr(optimizer, "analyze_path", fake_analyze)
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    provider = Provider()
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=provider,
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=2,
+    )
+
+    assert len(provider.requests) == 2
+    assert provider.requests[1].plan_relations == (
+        OptimizationPlanRelation(
+            "subsumes",
+            ("finding:TARGET:workload.py:1",),
+            "finding:OLD:workload.py:2",
+            (
+                "Evidence disappeared after promoting the source optimization "
+                "without being directly targeted."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:TARGET:workload.py:1",),
+            "finding:NEW:workload.py:3",
+            "Evidence appeared only after promoting the source optimization.",
+        ),
+    )
+    assert result.plan_relations == provider.requests[1].plan_relations
+    assert [step.evidence_id for step in provider.requests[1].plan] == [
+        "finding:NEW:workload.py:3"
+    ]
 
 
 
@@ -1046,7 +1329,7 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert explanation.baseline_wall_seconds is not None
     assert explanation.candidate_wall_seconds is not None
     assert "ACCEPT:" in explanation.summary
-    assert result.schema_version == 9
+    assert result.schema_version == 10
 
 
 @pytest.mark.performance

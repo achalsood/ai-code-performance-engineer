@@ -197,9 +197,28 @@ re-analyze and rebuild plan
 Because planning is repeated after promotion, evidence resolved by an accepted optimization no
 longer appears in the next stage's plan. Candidates declare the evidence IDs they target. Evaluation
 records resolve those IDs to plan priorities, and promoted stages persist both the matched priorities
-and exact evidence IDs. This provenance is also included in the run explanation. Plan order guides
-candidate generation and auditing only; empirical correctness and benchmark evidence continue to
-control acceptance and promotion.
+and exact evidence IDs. This provenance is also included in the run explanation.
+
+The optimizer also learns a relationship graph from observed state transitions:
+
+```text
+promoted evidence
+    |-- subsumes --> evidence that disappears without being directly targeted
+    |-- enables ---> evidence that appears only after promotion
+
+accepted alternative A
+    <-- conflicts --> accepted alternative B
+```
+
+`subsumes` and `enables` are inferred by comparing consecutive state-local plans. `conflicts` is
+recorded only when two individually accepted alternatives target different evidence and neither
+composition order can produce a correct combined state. These relationships are persisted in the
+run record and sent to later providers. Enabled evidence is promoted ahead of unrelated plan steps;
+evidence conflicting with already-promoted work is removed from later plans. `subsumes` remains
+provenance because the affected evidence has already disappeared from the next state.
+
+Relationship-aware ordering narrows the search space but does not make acceptance decisions.
+Empirical correctness and benchmark evidence continue to control promotion.
 
 ## Candidate identity and deduplication
 
