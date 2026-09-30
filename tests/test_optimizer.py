@@ -5,8 +5,41 @@ from pathlib import Path
 import pytest
 
 from perf_engineer.callable_benchmark import PythonCallableTarget
-from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
+from perf_engineer.optimizer import (
+    _optimization_plan,
+    export_winning_patch,
+    optimize,
+    save_optimization,
+)
+from perf_engineer.models import Finding
+from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
+
+
+
+
+def test_optimization_plan_prioritizes_hotspots_then_findings() -> None:
+    findings = (
+        Finding("PERF002", "b.py", 8, "medium", "allocation", "hoist allocation"),
+        Finding("PERF001", "a.py", 3, "high", "repeated work", "cache result"),
+    )
+    hotspots = (
+        Hotspot("hot.py", 12, "work", 2.5, 7),
+        Hotspot("other.py", 4, "parse", 1.0, 3),
+    )
+
+    plan = _optimization_plan(findings, hotspots)
+
+    assert [step.priority for step in plan] == [1, 2, 3, 4]
+    assert [step.evidence_id for step in plan] == [
+        "hotspot:hot.py:12:work",
+        "hotspot:other.py:4:parse",
+        "finding:PERF002:b.py:8",
+        "finding:PERF001:a.py:3",
+    ]
+    assert plan[0].expected_strategy == "reduce measured hot-path work"
+    assert plan[2].expected_strategy == "hoist allocation"
+
 
 
 class FixedProvider:
