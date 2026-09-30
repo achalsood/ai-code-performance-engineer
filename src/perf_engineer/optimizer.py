@@ -340,15 +340,69 @@ def _optimization_plan(
     findings: tuple[Finding, ...],
     hotspots: tuple[Hotspot, ...],
 ) -> tuple[OptimizationPlanStep, ...]:
-    steps: list[OptimizationPlanStep] = []
-    priority = 1
-    for hotspot in hotspots[:5]:
-        evidence_id = (
-            f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    hotspot_by_file: dict[str, tuple[Hotspot, ...]] = {}
+    for hotspot in hotspots:
+        hotspot_by_file.setdefault(hotspot.file, ())
+        hotspot_by_file[hotspot.file] += (hotspot,)
+
+    ranked_findings: list[tuple[int, int, str, int, Finding, Hotspot | None]] = []
+    for finding in findings:
+        nearby = [
+            hotspot
+            for hotspot in hotspot_by_file.get(finding.path, ())
+            if abs(hotspot.line - finding.line) <= 5
+        ]
+        nearest = min(
+            nearby,
+            key=lambda hotspot: (
+                abs(hotspot.line - finding.line),
+                -hotspot.cumulative_seconds,
+                hotspot.function,
+            ),
+            default=None,
         )
+        ranked_findings.append(
+            (
+                0 if nearest is not None else 1,
+                severity_rank.get(finding.severity, 1),
+                finding.path,
+                finding.line,
+                finding,
+                nearest,
+            )
+        )
+
+    steps: list[OptimizationPlanStep] = []
+    represented_hotspots: set[str] = set()
+    for _, _, _, _, finding, hotspot in sorted(ranked_findings, key=lambda item: item[:4]):
+        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
+        if hotspot is None:
+            rationale = f"{finding.severity} severity: {finding.message}"
+        else:
+            hotspot_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+            represented_hotspots.add(hotspot_id)
+            rationale = (
+                f"{finding.severity} severity finding near measured hotspot "
+                f"{hotspot.file}:{hotspot.line} {hotspot.function} "
+                f"({hotspot.cumulative_seconds:.6f}s cumulative)."
+            )
         steps.append(
             OptimizationPlanStep(
-                priority=priority,
+                priority=len(steps) + 1,
+                evidence_id=evidence_id,
+                rationale=rationale,
+                expected_strategy=finding.suggestion,
+            )
+        )
+
+    for hotspot in hotspots:
+        evidence_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+        if evidence_id in represented_hotspots:
+            continue
+        steps.append(
+            OptimizationPlanStep(
+                priority=len(steps) + 1,
                 evidence_id=evidence_id,
                 rationale=(
                     f"Measured hotspot with {hotspot.cumulative_seconds:.6f}s cumulative "
@@ -357,20 +411,6 @@ def _optimization_plan(
                 expected_strategy="reduce measured hot-path work",
             )
         )
-        priority += 1
-    for finding in findings:
-        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
-        if any(step.evidence_id == evidence_id for step in steps):
-            continue
-        steps.append(
-            OptimizationPlanStep(
-                priority=priority,
-                evidence_id=evidence_id,
-                rationale=f"{finding.severity} severity: {finding.message}",
-                expected_strategy=finding.suggestion,
-            )
-        )
-        priority += 1
     return tuple(steps[:10])
 
 
