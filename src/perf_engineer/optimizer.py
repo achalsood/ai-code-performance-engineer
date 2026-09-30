@@ -153,6 +153,76 @@ def _state_transition_relations(
     return tuple(relations)
 
 
+
+def _candidate_conflict_relations(
+    *,
+    repository: Path,
+    commit: str,
+    accepted_sequence: tuple[OptimizationCandidate, ...],
+    evaluations: tuple[CandidateEvaluation, ...],
+    test_command: list[str],
+    runner: CommandRunner,
+    policy: ExecutionPolicy,
+) -> tuple[OptimizationPlanRelation, ...]:
+    relations: list[OptimizationPlanRelation] = []
+    accepted = [
+        evaluation
+        for evaluation in evaluations
+        if evaluation.result is not None
+        and evaluation.result.decision is Decision.ACCEPT
+        and evaluation.candidate.target_evidence_ids
+    ]
+    for left_index, left in enumerate(accepted):
+        for right in accepted[left_index + 1 :]:
+            left_evidence = tuple(dict.fromkeys(left.candidate.target_evidence_ids))
+            right_evidence = tuple(dict.fromkeys(right.candidate.target_evidence_ids))
+            if set(left_evidence) & set(right_evidence):
+                continue
+
+            compatible = False
+            for first, second in (
+                (left.candidate, right.candidate),
+                (right.candidate, left.candidate),
+            ):
+                try:
+                    with _worktree(repository, commit) as combined_tree:
+                        _apply_candidate_sequence(combined_tree, accepted_sequence)
+                        apply_patch(combined_tree, first.patch)
+                        apply_patch(combined_tree, second.patch)
+                        compatible = run_correctness(
+                            test_command,
+                            cwd=combined_tree,
+                            runner=runner,
+                            policy=policy,
+                        )
+                except (PatchValidationError, OSError, RuntimeError, ValueError):
+                    compatible = False
+                if compatible:
+                    break
+
+            if compatible:
+                continue
+
+            rationale = (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            )
+            for source_ids, affected_ids in (
+                (left_evidence, right_evidence),
+                (right_evidence, left_evidence),
+            ):
+                for affected_id in affected_ids:
+                    relations.append(
+                        OptimizationPlanRelation(
+                            kind="conflicts",
+                            source_evidence_ids=source_ids,
+                            affected_evidence_id=affected_id,
+                            rationale=rationale,
+                        )
+                    )
+    return tuple(relations)
+
+
 def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
     evidence: dict[str, str] = {}
     for finding in request.findings:
@@ -942,6 +1012,18 @@ def optimize(
                     item.result.candidate.peak_memory_bytes if item.result else 0,
                     item.candidate.candidate_id,
                 )
+            )
+            conflict_relations = _candidate_conflict_relations(
+                repository=repository,
+                commit=commit,
+                accepted_sequence=tuple(accepted_sequence),
+                evaluations=tuple(attempt_evaluations),
+                test_command=test_command,
+                runner=selected_runner,
+                policy=selected_policy,
+            )
+            plan_relations.extend(
+                relation for relation in conflict_relations if relation not in plan_relations
             )
             if not accepted:
                 if stage_attempt < maximum_provider_attempts and audit_logger:
