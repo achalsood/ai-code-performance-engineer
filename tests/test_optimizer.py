@@ -17,7 +17,6 @@ from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
 
 
-
 def test_optimization_plan_prioritizes_hotspots_then_findings() -> None:
     findings = (
         Finding("PERF002", "b.py", 8, "medium", "allocation", "hoist allocation"),
