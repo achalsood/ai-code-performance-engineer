@@ -17,9 +17,15 @@ from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
 from .callable_benchmark import PythonCallableTarget, run_paired_callable_benchmarks
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
-from .models import BenchmarkResult, Decision, PerformanceAttribution, VerificationResult
+from .models import (
+    BenchmarkResult,
+    Decision,
+    Finding,
+    PerformanceAttribution,
+    VerificationResult,
+)
 from .patches import PatchValidationError, apply_patch
-from .profiling import CProfileAdapter, ProfileResult, ProfilingError
+from .profiling import CProfileAdapter, Hotspot, ProfileResult, ProfilingError
 from .providers import (
     CandidateProvider,
     OptimizationCandidate,
@@ -331,8 +337,8 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
 
 
 def _optimization_plan(
-    findings: tuple[object, ...],
-    hotspots: tuple[object, ...],
+    findings: tuple[Finding, ...],
+    hotspots: tuple[Hotspot, ...],
 ) -> tuple[OptimizationPlanStep, ...]:
     steps: list[OptimizationPlanStep] = []
     priority = 1
