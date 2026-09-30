@@ -25,7 +25,8 @@ Repository / Git ref --->| Repository runner |
                      +----------------------+
                      | Optimization request |
                      | findings + hotspots  |
-                     | bounded source context|
+                     | ranked plan + source |
+                     | bounded context      |
                      +----------+-----------+
                                 |
                                 v
@@ -164,6 +165,42 @@ Feedback is stage-local. A later provider attempt sees measured failures from th
 including correctness failures, confidence, speedup intervals, CPU/memory effects, and attribution.
 A newly promoted state starts with fresh analysis and fresh stage-local feedback.
 
+## Optimization planning
+
+Before candidate generation, the optimizer converts current-state evidence into a bounded,
+deterministic plan. Static findings within five source lines of repository-owned measured hotspots
+are treated as measured findings and ranked ahead of findings in cold code. Remaining findings
+follow by severity and deterministic source order, while unmatched hotspots remain explicit plan
+steps. Plans are capped at ten steps.
+
+The plan is state-local rather than global:
+
+```text
+promoted state
+    |
+    v
+analyze + profile
+    |
+    v
+build ranked plan
+    |
+    v
+generate / verify alternatives
+    |
+    v
+promote accepted candidate
+    |
+    v
+re-analyze and rebuild plan
+```
+
+Because planning is repeated after promotion, evidence resolved by an accepted optimization no
+longer appears in the next stage's plan. Candidates declare the evidence IDs they target. Evaluation
+records resolve those IDs to plan priorities, and promoted stages persist both the matched priorities
+and exact evidence IDs. This provenance is also included in the run explanation. Plan order guides
+candidate generation and auditing only; empirical correctness and benchmark evidence continue to
+control acceptance and promotion.
+
 ## Candidate identity and deduplication
 
 Candidate IDs are kept unique across the run for provenance. Valid candidates are applied to the current promoted state and identified by their resulting Git tree before expensive correctness and benchmark execution. Deduplication is keyed by both the baseline state and resulting state. This suppresses textually different patches that produce identical repository content from the same baseline while allowing an equivalent resulting tree to be reconsidered when reached from a genuinely different baseline. Invalid patches are not semantically deduplicated before evaluation so their concrete validation failures remain available as provider-refinement feedback.
@@ -191,7 +228,7 @@ wall / CPU / memory deltas
 correctness + confidence + decision
 ```
 
-Static findings and profiler hotspots are assigned evidence identifiers and supplied to providers.
+Static findings and profiler hotspots are assigned evidence identifiers and supplied to providers through the state-local optimization plan.
 Candidate-declared evidence links are resolved back to human-readable findings or hotspots for the
 stored attribution. Each `CandidateEvaluation` also stores an `OptimizationExplanation` that turns this evidence into an auditable decision record: target, strategy, evidence IDs, changed paths, correctness status, confidence, decision reason, wall-time before/after, speedup and confidence interval, and CPU/memory deltas. Correctness failures and invalid patches receive unmeasured explanations rather than losing their rejection rationale. This makes a result explain not only *whether* a patch won, but what measured
 problem it attempted to address and what changed.

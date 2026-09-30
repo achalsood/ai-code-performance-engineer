@@ -17,10 +17,21 @@ from .benchmark import run_adaptive_paired_benchmarks, run_benchmark
 from .callable_benchmark import PythonCallableTarget, run_paired_callable_benchmarks
 from .environment import environment_fingerprint
 from .execution import CommandRunner, ExecutionPolicy, LocalProcessRunner
-from .models import BenchmarkResult, Decision, PerformanceAttribution, VerificationResult
+from .models import (
+    BenchmarkResult,
+    Decision,
+    Finding,
+    PerformanceAttribution,
+    VerificationResult,
+)
 from .patches import PatchValidationError, apply_patch
-from .profiling import CProfileAdapter, ProfileResult, ProfilingError
-from .providers import CandidateProvider, OptimizationCandidate, OptimizationRequest
+from .profiling import CProfileAdapter, Hotspot, ProfileResult, ProfilingError
+from .providers import (
+    CandidateProvider,
+    OptimizationCandidate,
+    OptimizationPlanStep,
+    OptimizationRequest,
+)
 from .redaction import redact_secrets
 from .repository import resolve_commit
 from .verification import compare, run_correctness
@@ -44,6 +55,7 @@ class OptimizationExplanation:
     speedup_ci95_high: float | None = None
     cpu_change_percent: float | None = None
     memory_change_percent: float | None = None
+    plan_priorities: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,7 @@ class CandidateEvaluation:
     stage_number: int | None = None
     attempt_number: int | None = None
     explanation: OptimizationExplanation | None = None
+    plan_priorities: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -72,12 +85,33 @@ class OptimizationStage:
     changed_paths: tuple[str, ...]
     promotion_reason: str = ""
     alternatives_considered: tuple[str, ...] = ()
+    plan_priorities: tuple[int, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
 
 
 def _percent_change(baseline: float, candidate_value: float) -> float:
     if baseline <= 0:
         return 0.0
     return ((candidate_value - baseline) / baseline) * 100.0
+
+
+def _plan_priorities(
+    candidate: OptimizationCandidate,
+    request: OptimizationRequest,
+) -> tuple[int, ...]:
+    priorities = {
+        step.evidence_id: step.priority
+        for step in request.plan
+    }
+    return tuple(
+        sorted(
+            {
+                priorities[evidence_id]
+                for evidence_id in candidate.target_evidence_ids
+                if evidence_id in priorities
+            }
+        )
+    )
 
 
 def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
@@ -180,6 +214,7 @@ def _explanation(
         memory_change_percent=(
             result.memory_change_percent if result is not None else None
         ),
+        plan_priorities=_plan_priorities(candidate, request),
     )
 
 
@@ -222,13 +257,29 @@ def _run_explanation(
         )
 
     promoted = " -> ".join(stage.candidate_id for stage in stages)
+    planned_objectives = "; ".join(
+        (
+            f"stage {stage.stage_number}: plan priorities "
+            f"{','.join(str(priority) for priority in stage.plan_priorities)} "
+            f"via {','.join(stage.evidence_ids)}"
+        )
+        for stage in stages
+        if stage.plan_priorities or stage.evidence_ids
+    )
+    provenance_summary = (
+        f" Planned objectives: {planned_objectives}."
+        if planned_objectives
+        else ""
+    )
     if final_verification is None:
         return (
-            f"Promoted {len(stages)} stage(s): {promoted}. "
+            f"Promoted {len(stages)} stage(s): {promoted}."
+            f"{provenance_summary} "
             "Final original-to-optimized verification is unavailable."
         )
     return (
-        f"Promoted {len(stages)} stage(s): {promoted}. Final verification "
+        f"Promoted {len(stages)} stage(s): {promoted}."
+        f"{provenance_summary} Final verification "
         f"{final_verification.decision.value}: "
         f"{final_verification.speedup_percent:.2f}% speedup "
         f"(95% CI {final_verification.speedup_ci95_low:.2f}% to "
@@ -323,6 +374,89 @@ def _worktree(repository: Path, commit: str) -> Iterator[Path]:
                 capture_output=True,
                 check=False,
             )
+
+
+def _optimization_plan(
+    findings: tuple[Finding, ...],
+    hotspots: tuple[Hotspot, ...],
+) -> tuple[OptimizationPlanStep, ...]:
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    hotspot_by_file: dict[str, tuple[Hotspot, ...]] = {}
+    for hotspot in hotspots:
+        hotspot_by_file.setdefault(hotspot.file, ())
+        hotspot_by_file[hotspot.file] += (hotspot,)
+
+    ranked_findings: list[tuple[int, int, str, int, Finding, Hotspot | None]] = []
+    for finding in findings:
+        nearby = [
+            hotspot
+            for hotspot in hotspot_by_file.get(finding.path, ())
+            if abs(hotspot.line - finding.line) <= 5
+        ]
+        nearest = min(
+            nearby,
+            key=lambda hotspot: (
+                abs(hotspot.line - finding.line),
+                -hotspot.cumulative_seconds,
+                hotspot.function,
+            ),
+            default=None,
+        )
+        ranked_findings.append(
+            (
+                0 if nearest is not None else 1,
+                severity_rank.get(finding.severity, 1),
+                finding.path,
+                finding.line,
+                finding,
+                nearest,
+            )
+        )
+
+    steps: list[OptimizationPlanStep] = []
+    represented_hotspots: set[str] = set()
+    for _, _, _, _, finding, matched_hotspot in sorted(
+        ranked_findings, key=lambda item: item[:4]
+    ):
+        evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
+        if matched_hotspot is None:
+            rationale = f"{finding.severity} severity: {finding.message}"
+        else:
+            hotspot_id = (
+                f"hotspot:{matched_hotspot.file}:{matched_hotspot.line}:"
+                f"{matched_hotspot.function}"
+            )
+            represented_hotspots.add(hotspot_id)
+            rationale = (
+                f"{finding.severity} severity finding near measured hotspot "
+                f"{matched_hotspot.file}:{matched_hotspot.line} {matched_hotspot.function} "
+                f"({matched_hotspot.cumulative_seconds:.6f}s cumulative)."
+            )
+        steps.append(
+            OptimizationPlanStep(
+                priority=len(steps) + 1,
+                evidence_id=evidence_id,
+                rationale=rationale,
+                expected_strategy=finding.suggestion,
+            )
+        )
+
+    for hotspot in hotspots:
+        evidence_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+        if evidence_id in represented_hotspots:
+            continue
+        steps.append(
+            OptimizationPlanStep(
+                priority=len(steps) + 1,
+                evidence_id=evidence_id,
+                rationale=(
+                    f"Measured hotspot with {hotspot.cumulative_seconds:.6f}s cumulative "
+                    f"across {hotspot.calls} call(s)."
+                ),
+                expected_strategy="reduce measured hot-path work",
+            )
+        )
+    return tuple(steps[:10])
 
 
 def _request(
@@ -420,6 +554,7 @@ def _request(
         redaction_counts=redaction_counts,
         optimization_hints=optimization_hints,
         hotspots=tuple(project_hotspots),
+        plan=_optimization_plan(findings, tuple(project_hotspots)),
     )
 
 
@@ -642,6 +777,7 @@ def optimize(
                                         changed_paths=changed_paths,
                                         correctness_passed=False,
                                     ),
+                                    plan_priorities=_plan_priorities(candidate, request),
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -705,6 +841,7 @@ def optimize(
                                 result=result,
                                 attribution=attribution,
                             ),
+                            plan_priorities=_plan_priorities(candidate, request),
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -736,6 +873,7 @@ def optimize(
                             reason=reason,
                             changed_paths=(),
                         ),
+                        plan_priorities=_plan_priorities(candidate, request),
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
@@ -797,6 +935,8 @@ def optimize(
                     changed_paths=selected.changed_paths,
                     promotion_reason=promotion_reason,
                     alternatives_considered=ranked_alternatives,
+                    plan_priorities=selected.plan_priorities,
+                    evidence_ids=selected.candidate.target_evidence_ids,
                 )
             )
             if audit_logger:
@@ -902,7 +1042,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=8,
+        schema_version=9,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,

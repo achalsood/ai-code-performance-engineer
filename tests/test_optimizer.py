@@ -5,8 +5,19 @@ from pathlib import Path
 import pytest
 
 from perf_engineer.callable_benchmark import PythonCallableTarget
-from perf_engineer.optimizer import export_winning_patch, optimize, save_optimization
-from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
+from perf_engineer.models import Finding
+from perf_engineer.optimizer import (
+    _optimization_plan,
+    export_winning_patch,
+    optimize,
+    save_optimization,
+)
+from perf_engineer.profiling import Hotspot
+from perf_engineer.providers import (
+    OptimizationCandidate,
+    OptimizationPlanStep,
+    OptimizationRequest,
+)
 
 
 class FixedProvider:
@@ -44,6 +55,86 @@ class RefiningProvider:
                 "fast", "Reduce wait", "Uses feedback", patch, "repeated-work", "90%", "low"
             )
         ]
+
+
+def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots() -> None:
+    findings = (
+        Finding("PERF002", "hot.py", 10, "medium", "allocation", "hoist allocation"),
+        Finding("PERF001", "cold.py", 3, "high", "repeated work", "cache result"),
+    )
+    hotspots = (
+        Hotspot("work", "hot.py", 12, 7, 0.5, 2.5),
+        Hotspot("parse", "other.py", 4, 3, 0.2, 1.0),
+    )
+
+    plan = _optimization_plan(findings, hotspots)
+
+    assert [step.priority for step in plan] == [1, 2, 3]
+    assert [step.evidence_id for step in plan] == [
+        "finding:PERF002:hot.py:10",
+        "finding:PERF001:cold.py:3",
+        "hotspot:other.py:4:parse",
+    ]
+    assert "near measured hotspot hot.py:12 work" in plan[0].rationale
+    assert plan[0].expected_strategy == "hoist allocation"
+    assert plan[2].expected_strategy == "reduce measured hot-path work"
+
+
+
+def test_candidate_plan_priorities_follow_targeted_evidence() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    candidate = OptimizationCandidate(
+        "candidate",
+        "Target measured work",
+        "Use the strongest evidence",
+        "patch",
+        target_evidence_ids=(
+            "finding:PERF002:hot.py:10",
+            "hotspot:other.py:4:parse",
+            "finding:UNKNOWN:missing.py:1",
+        ),
+    )
+    request = OptimizationRequest(
+        objective="Improve runtime",
+        language="python",
+        findings=(),
+        files={},
+        maximum_candidates=1,
+        plan=(
+            OptimizationPlanStep(1, "finding:PERF002:hot.py:10", "measured", "hoist"),
+            OptimizationPlanStep(3, "hotspot:other.py:4:parse", "hotspot", "reduce work"),
+        ),
+    )
+
+    assert optimizer._plan_priorities(candidate, request) == (1, 3)
+
+
+
+def test_optimization_plan_is_capped_and_deterministic() -> None:
+    findings = tuple(
+        Finding(
+            f"PERF{index:03d}",
+            f"file{index:02d}.py",
+            index,
+            "medium",
+            f"finding {index}",
+            f"strategy {index}",
+        )
+        for index in range(1, 13)
+    )
+
+    first = _optimization_plan(findings, ())
+    second = _optimization_plan(findings, ())
+
+    assert first == second
+    assert len(first) == 10
+    assert [step.priority for step in first] == list(range(1, 11))
+    assert [step.evidence_id for step in first] == [
+        f"finding:PERF{index:03d}:file{index:02d}.py:{index}"
+        for index in range(1, 11)
+    ]
+
 
 
 def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
@@ -168,6 +259,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
     assert result.provider_attempts == 2
     assert [request.attempt_number for request in provider.requests] == [1, 1]
+    assert provider.requests[0].files["workload.py"] != provider.requests[1].files["workload.py"]
+    assert provider.requests[0].plan == ()
+    assert provider.requests[1].plan == ()
     assert [item.status for item in result.evaluations] == ["accept", "accept"]
     second_result = result.evaluations[1].result
     assert second_result is not None
@@ -177,6 +271,10 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert all(stage.promotion_reason for stage in result.stages)
     assert result.stages[0].alternatives_considered == ("first",)
     assert result.stages[1].alternatives_considered == ("second",)
+    assert result.stages[0].plan_priorities == ()
+    assert result.stages[1].plan_priorities == ()
+    assert result.stages[0].evidence_ids == ()
+    assert result.stages[1].evidence_ids == ()
     assert "highest utility score" in result.stages[0].promotion_reason
     assert [
         (evaluation.stage_number, evaluation.attempt_number)
@@ -217,6 +315,181 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
         check=True,
     )
     assert "time.sleep(0.01)" in (verification / "workload.py").read_text(encoding="utf-8")
+
+
+
+
+
+
+
+def test_promoted_stage_records_plan_step_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "values = list(range(10))\n"
+        "for item in items:\n"
+        "    consume(list(values))\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class Provider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            evidence_id = request.plan[0].evidence_id
+            patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,4 @@
+ values = list(range(10))
++cached_values = list(values)
+ for item in items:
+-    consume(list(values))
++    consume(cached_values)
+"""
+            return [
+                OptimizationCandidate(
+                    "hoist",
+                    "Hoist allocation",
+                    "Hoist invariant list creation",
+                    patch,
+                    target_evidence_ids=(evidence_id,),
+                )
+            ]
+
+    baseline = BenchmarkResult(("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    candidate = BenchmarkResult(("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5)
+    accepted = VerificationResult(
+        Decision.ACCEPT,
+        50.0,
+        True,
+        True,
+        "accepted",
+        baseline,
+        candidate,
+        40.0,
+        60.0,
+    )
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=Provider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
+    )
+
+    assert result.stages[0].plan_priorities == (1,)
+    assert result.stages[0].evidence_ids == ("finding:PERF002:workload.py:3",)
+    assert "Planned objectives: stage 1: plan priorities 1" in result.explanation
+    assert "finding:PERF002:workload.py:3" in result.explanation
+
+
+
+def test_optimizer_replans_when_promoted_state_changes_analyzer_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "values = list(range(10))\n"
+        "for item in items:\n"
+        "    consume(list(values))\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class ReplanningProvider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
+            source = request.files["workload.py"]
+            if "consume(list(values))" in source:
+                patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,4 @@
+ values = list(range(10))
++cached_values = list(values)
+ for item in items:
+-    consume(list(values))
++    consume(cached_values)
+"""
+                return [OptimizationCandidate("hoist", "Hoist", "Hoist allocation", patch)]
+            return []
+
+    baseline = BenchmarkResult(
+        ("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    candidate = BenchmarkResult(
+        ("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5
+    )
+    accepted = VerificationResult(
+        Decision.ACCEPT,
+        50.0,
+        True,
+        True,
+        "accepted",
+        baseline,
+        candidate,
+        40.0,
+        60.0,
+    )
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    provider = ReplanningProvider()
+    optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=provider,
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=2,
+    )
+
+    assert len(provider.requests) == 2
+    assert [step.evidence_id for step in provider.requests[0].plan] == [
+        "finding:PERF002:workload.py:3"
+    ]
+    assert provider.requests[1].plan == ()
+    assert "cached_values = list(values)" in provider.requests[1].files["workload.py"]
 
 
 
@@ -773,7 +1046,7 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert explanation.baseline_wall_seconds is not None
     assert explanation.candidate_wall_seconds is not None
     assert "ACCEPT:" in explanation.summary
-    assert result.schema_version == 8
+    assert result.schema_version == 9
 
 
 @pytest.mark.performance
