@@ -13,7 +13,11 @@ from perf_engineer.optimizer import (
     save_optimization,
 )
 from perf_engineer.profiling import Hotspot
-from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
+from perf_engineer.providers import (
+    OptimizationCandidate,
+    OptimizationPlanStep,
+    OptimizationRequest,
+)
 
 
 class FixedProvider:
@@ -74,6 +78,37 @@ def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots(
     assert "near measured hotspot hot.py:12 work" in plan[0].rationale
     assert plan[0].expected_strategy == "hoist allocation"
     assert plan[2].expected_strategy == "reduce measured hot-path work"
+
+
+
+def test_candidate_plan_priorities_follow_targeted_evidence() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    candidate = OptimizationCandidate(
+        "candidate",
+        "Target measured work",
+        "Use the strongest evidence",
+        "patch",
+        target_evidence_ids=(
+            "finding:PERF002:hot.py:10",
+            "hotspot:other.py:4:parse",
+            "finding:UNKNOWN:missing.py:1",
+        ),
+    )
+    request = OptimizationRequest(
+        objective="Improve runtime",
+        language="python",
+        findings=(),
+        files={},
+        maximum_candidates=1,
+        plan=(
+            OptimizationPlanStep(1, "finding:PERF002:hot.py:10", "measured", "hoist"),
+            OptimizationPlanStep(3, "hotspot:other.py:4:parse", "hotspot", "reduce work"),
+        ),
+    )
+
+    assert optimizer._plan_priorities(candidate, request) == (1, 3)
+
 
 
 def test_optimization_plan_is_capped_and_deterministic() -> None:
