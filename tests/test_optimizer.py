@@ -444,6 +444,108 @@ def test_promoted_stage_records_plan_step_provenance(
 
 
 
+
+
+def test_next_stage_receives_learned_plan_relationships(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("state = 'before'\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    def fake_analyze(path: Path) -> list[Finding]:
+        source = (path / "workload.py").read_text(encoding="utf-8")
+        if "before" in source:
+            return [
+                Finding("TARGET", str(path / "workload.py"), 1, "high", "target", "optimize"),
+                Finding("OLD", str(path / "workload.py"), 2, "medium", "old", "optimize"),
+            ]
+        return [
+            Finding("NEW", str(path / "workload.py"), 3, "medium", "new", "optimize"),
+        ]
+
+    class Provider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
+            if "before" in request.files["workload.py"]:
+                patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-state = 'before'
++state = 'after'
+"""
+                return [
+                    OptimizationCandidate(
+                        "transition",
+                        "Transition state",
+                        "Exercise learned relationships",
+                        patch,
+                        target_evidence_ids=("finding:TARGET:workload.py:1",),
+                    )
+                ]
+            return []
+
+    baseline = BenchmarkResult(("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    candidate = BenchmarkResult(("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5)
+    accepted = VerificationResult(
+        Decision.ACCEPT, 50.0, True, True, "accepted", baseline, candidate, 40.0, 60.0
+    )
+    monkeypatch.setattr(optimizer, "analyze_path", fake_analyze)
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    provider = Provider()
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=provider,
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=2,
+    )
+
+    assert len(provider.requests) == 2
+    assert provider.requests[1].plan_relations == (
+        OptimizationPlanRelation(
+            "subsumes",
+            ("finding:TARGET:workload.py:1",),
+            "finding:OLD:workload.py:2",
+            (
+                "Evidence disappeared after promoting the source optimization "
+                "without being directly targeted."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:TARGET:workload.py:1",),
+            "finding:NEW:workload.py:3",
+            "Evidence appeared only after promoting the source optimization.",
+        ),
+    )
+    assert result.plan_relations == provider.requests[1].plan_relations
+
+
+
 def test_optimizer_replans_when_promoted_state_changes_analyzer_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
