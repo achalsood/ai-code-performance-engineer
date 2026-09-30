@@ -375,17 +375,22 @@ def _optimization_plan(
 
     steps: list[OptimizationPlanStep] = []
     represented_hotspots: set[str] = set()
-    for _, _, _, _, finding, hotspot in sorted(ranked_findings, key=lambda item: item[:4]):
+    for _, _, _, _, finding, matched_hotspot in sorted(
+        ranked_findings, key=lambda item: item[:4]
+    ):
         evidence_id = f"finding:{finding.rule_id}:{finding.path}:{finding.line}"
-        if hotspot is None:
+        if matched_hotspot is None:
             rationale = f"{finding.severity} severity: {finding.message}"
         else:
-            hotspot_id = f"hotspot:{hotspot.file}:{hotspot.line}:{hotspot.function}"
+            hotspot_id = (
+                f"hotspot:{matched_hotspot.file}:{matched_hotspot.line}:"
+                f"{matched_hotspot.function}"
+            )
             represented_hotspots.add(hotspot_id)
             rationale = (
                 f"{finding.severity} severity finding near measured hotspot "
-                f"{hotspot.file}:{hotspot.line} {hotspot.function} "
-                f"({hotspot.cumulative_seconds:.6f}s cumulative)."
+                f"{matched_hotspot.file}:{matched_hotspot.line} {matched_hotspot.function} "
+                f"({matched_hotspot.cumulative_seconds:.6f}s cumulative)."
             )
         steps.append(
             OptimizationPlanStep(
