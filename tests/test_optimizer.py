@@ -24,8 +24,8 @@ def test_optimization_plan_prioritizes_hotspots_then_findings() -> None:
         Finding("PERF001", "a.py", 3, "high", "repeated work", "cache result"),
     )
     hotspots = (
-        Hotspot("hot.py", 12, "work", 2.5, 7),
-        Hotspot("other.py", 4, "parse", 1.0, 3),
+        Hotspot("work", "hot.py", 12, 7, 0.5, 2.5),
+        Hotspot("parse", "other.py", 4, 3, 0.2, 1.0),
     )
 
     plan = _optimization_plan(findings, hotspots)
@@ -201,9 +201,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
     assert result.provider_attempts == 2
     assert [request.attempt_number for request in provider.requests] == [1, 1]
-    assert provider.requests[0].plan
-    assert provider.requests[1].plan
     assert provider.requests[0].files["workload.py"] != provider.requests[1].files["workload.py"]
+    assert provider.requests[0].plan == ()
+    assert provider.requests[1].plan == ()
     assert [item.status for item in result.evaluations] == ["accept", "accept"]
     second_result = result.evaluations[1].result
     assert second_result is not None
