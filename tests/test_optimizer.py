@@ -5,13 +5,13 @@ from pathlib import Path
 import pytest
 
 from perf_engineer.callable_benchmark import PythonCallableTarget
+from perf_engineer.models import Finding
 from perf_engineer.optimizer import (
     _optimization_plan,
     export_winning_patch,
     optimize,
     save_optimization,
 )
-from perf_engineer.models import Finding
 from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
