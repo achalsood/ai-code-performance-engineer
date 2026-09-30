@@ -957,7 +957,7 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert explanation.baseline_wall_seconds is not None
     assert explanation.candidate_wall_seconds is not None
     assert "ACCEPT:" in explanation.summary
-    assert result.schema_version == 8
+    assert result.schema_version == 9
 
 
 @pytest.mark.performance
