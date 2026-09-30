@@ -271,6 +271,10 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert all(stage.promotion_reason for stage in result.stages)
     assert result.stages[0].alternatives_considered == ("first",)
     assert result.stages[1].alternatives_considered == ("second",)
+    assert result.stages[0].plan_priorities == ()
+    assert result.stages[1].plan_priorities == ()
+    assert result.stages[0].evidence_ids == ()
+    assert result.stages[1].evidence_ids == ()
     assert "highest utility score" in result.stages[0].promotion_reason
     assert [
         (evaluation.stage_number, evaluation.attempt_number)
@@ -313,6 +317,89 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
     assert "time.sleep(0.01)" in (verification / "workload.py").read_text(encoding="utf-8")
 
 
+
+
+
+
+
+def test_promoted_stage_records_plan_step_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "values = list(range(10))\n"
+        "for item in items:\n"
+        "    consume(list(values))\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class Provider:
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            evidence_id = request.plan[0].evidence_id
+            patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,4 @@
+ values = list(range(10))
++cached_values = list(values)
+ for item in items:
+-    consume(list(values))
++    consume(cached_values)
+"""
+            return [
+                OptimizationCandidate(
+                    "hoist",
+                    "Hoist allocation",
+                    "Hoist invariant list creation",
+                    patch,
+                    target_evidence_ids=(evidence_id,),
+                )
+            ]
+
+    baseline = BenchmarkResult(("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    candidate = BenchmarkResult(("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5)
+    accepted = VerificationResult(
+        Decision.ACCEPT,
+        50.0,
+        True,
+        True,
+        "accepted",
+        baseline,
+        candidate,
+        40.0,
+        60.0,
+    )
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    result = optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=Provider(),
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=1,
+    )
+
+    assert result.stages[0].plan_priorities == (1,)
+    assert result.stages[0].evidence_ids == ("finding:PERF002:workload.py:3",)
 
 
 
