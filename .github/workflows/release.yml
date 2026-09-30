@@ -15,7 +15,7 @@ jobs:
     if: "${{ startsWith(github.ref, 'refs/tags/v') || startsWith(github.event.head_commit.message, 'release: v') }}"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Resolve and create release tag
