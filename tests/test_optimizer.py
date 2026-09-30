@@ -16,6 +16,44 @@ from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
 
+
+class FixedProvider:
+    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+        assert request.language == "python"
+        patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,2 +1,2 @@
+ import time
+-time.sleep(0.10)
++time.sleep(0.01)
+"""
+        return [OptimizationCandidate("fast", "Reduce wait", "Removes idle time", patch)]
+
+
+class RefiningProvider:
+    def __init__(self) -> None:
+        self.requests: list[OptimizationRequest] = []
+
+    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+        self.requests.append(request)
+        if request.attempt_number == 1:
+            return [OptimizationCandidate("bad", "Invalid", "First attempt", "not a diff")]
+        patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,2 +1,2 @@
+ import time
+-time.sleep(0.10)
++time.sleep(0.01)
+"""
+        return [
+            OptimizationCandidate(
+                "fast", "Reduce wait", "Uses feedback", patch, "repeated-work", "90%", "low"
+            )
+        ]
+
+
 def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots() -> None:
     findings = (
         Finding("PERF002", "hot.py", 10, "medium", "allocation", "hoist allocation"),
