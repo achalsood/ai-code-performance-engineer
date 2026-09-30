@@ -221,6 +221,44 @@ def test_candidate_conflicts_are_learned_from_incompatible_accepted_states(
 
 
 
+
+def test_plan_relations_prioritize_enabled_and_suppress_conflicts() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    plan = (
+        OptimizationPlanStep(1, "finding:COLD:a.py:1", "cold", "optimize"),
+        OptimizationPlanStep(2, "finding:ENABLED:a.py:2", "enabled", "optimize"),
+        OptimizationPlanStep(3, "finding:BLOCKED:a.py:3", "blocked", "optimize"),
+    )
+    relations = (
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:PROMOTED:a.py:0",),
+            "finding:ENABLED:a.py:2",
+            "enabled",
+        ),
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:PROMOTED:a.py:0",),
+            "finding:BLOCKED:a.py:3",
+            "conflict",
+        ),
+    )
+
+    adjusted = optimizer._apply_plan_relations(
+        plan,
+        relations,
+        {"finding:PROMOTED:a.py:0"},
+    )
+
+    assert [step.evidence_id for step in adjusted] == [
+        "finding:ENABLED:a.py:2",
+        "finding:COLD:a.py:1",
+    ]
+    assert [step.priority for step in adjusted] == [1, 2]
+
+
+
 def test_candidate_plan_priorities_follow_targeted_evidence() -> None:
     import perf_engineer.optimizer as optimizer
 
@@ -644,6 +682,9 @@ def test_next_stage_receives_learned_plan_relationships(
         ),
     )
     assert result.plan_relations == provider.requests[1].plan_relations
+    assert [step.evidence_id for step in provider.requests[1].plan] == [
+        "finding:NEW:workload.py:3"
+    ]
 
 
 
