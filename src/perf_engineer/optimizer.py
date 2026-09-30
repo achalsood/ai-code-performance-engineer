@@ -29,6 +29,7 @@ from .profiling import CProfileAdapter, Hotspot, ProfileResult, ProfilingError
 from .providers import (
     CandidateProvider,
     OptimizationCandidate,
+    OptimizationPlanRelation,
     OptimizationPlanStep,
     OptimizationRequest,
 )
@@ -112,6 +113,44 @@ def _plan_priorities(
             }
         )
     )
+
+
+
+def _state_transition_relations(
+    previous_plan: tuple[OptimizationPlanStep, ...],
+    current_plan: tuple[OptimizationPlanStep, ...],
+    source_evidence_ids: tuple[str, ...],
+) -> tuple[OptimizationPlanRelation, ...]:
+    if not source_evidence_ids:
+        return ()
+    previous_ids = {step.evidence_id for step in previous_plan}
+    current_ids = {step.evidence_id for step in current_plan}
+    relations: list[OptimizationPlanRelation] = []
+
+    for evidence_id in sorted(previous_ids - current_ids - set(source_evidence_ids)):
+        relations.append(
+            OptimizationPlanRelation(
+                kind="subsumes",
+                source_evidence_ids=source_evidence_ids,
+                affected_evidence_id=evidence_id,
+                rationale=(
+                    "Evidence disappeared after promoting the source optimization "
+                    "without being directly targeted."
+                ),
+            )
+        )
+    for evidence_id in sorted(current_ids - previous_ids):
+        relations.append(
+            OptimizationPlanRelation(
+                kind="enables",
+                source_evidence_ids=source_evidence_ids,
+                affected_evidence_id=evidence_id,
+                rationale=(
+                    "Evidence appeared only after promoting the source optimization."
+                ),
+            )
+        )
+    return tuple(relations)
 
 
 def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
@@ -234,6 +273,7 @@ class OptimizationRun:
     composed_patch: str | None = None
     final_verification: VerificationResult | None = None
     explanation: str = ""
+    plan_relations: tuple[OptimizationPlanRelation, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -666,6 +706,9 @@ def optimize(
     original_baseline_seconds: float | None = None
     provider_attempts = 0
     seen_resulting_states: set[tuple[str, str]] = set()
+    plan_relations: list[OptimizationPlanRelation] = []
+    previous_plan: tuple[OptimizationPlanStep, ...] | None = None
+    previous_stage_evidence_ids: tuple[str, ...] = ()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
@@ -692,8 +735,16 @@ def optimize(
                     except ProfilingError:
                         stage_profile = None
                 request = _request(repository, stage_tree, maximum_candidates, stage_profile)
+                if stage_attempt == 1 and previous_plan is not None:
+                    learned = _state_transition_relations(
+                        previous_plan,
+                        request.plan,
+                        previous_stage_evidence_ids,
+                    )
+                    plan_relations.extend(learned)
                 request = replace(
                     request,
+                    plan_relations=tuple(plan_relations),
                     attempt_number=stage_attempt,
                     feedback=_candidate_feedback(stage_evaluations),
                     optimization_hints=(
@@ -939,6 +990,8 @@ def optimize(
                     evidence_ids=selected.candidate.target_evidence_ids,
                 )
             )
+            previous_plan = request.plan
+            previous_stage_evidence_ids = selected.candidate.target_evidence_ids
             if audit_logger:
                 audit_logger.append(
                     "optimization_stage_promoted",
@@ -1042,7 +1095,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=9,
+        schema_version=10,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
@@ -1058,6 +1111,7 @@ def optimize(
         explanation=_run_explanation(
             tuple(stages), tuple(evaluations), final_verification
         ),
+        plan_relations=tuple(plan_relations),
     )
 
 
