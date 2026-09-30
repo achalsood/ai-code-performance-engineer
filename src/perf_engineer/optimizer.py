@@ -55,6 +55,7 @@ class OptimizationExplanation:
     speedup_ci95_high: float | None = None
     cpu_change_percent: float | None = None
     memory_change_percent: float | None = None
+    plan_priorities: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ class CandidateEvaluation:
     stage_number: int | None = None
     attempt_number: int | None = None
     explanation: OptimizationExplanation | None = None
+    plan_priorities: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,25 @@ def _percent_change(baseline: float, candidate_value: float) -> float:
     if baseline <= 0:
         return 0.0
     return ((candidate_value - baseline) / baseline) * 100.0
+
+
+def _plan_priorities(
+    candidate: OptimizationCandidate,
+    request: OptimizationRequest,
+) -> tuple[int, ...]:
+    priorities = {
+        step.evidence_id: step.priority
+        for step in request.plan
+    }
+    return tuple(
+        sorted(
+            {
+                priorities[evidence_id]
+                for evidence_id in candidate.target_evidence_ids
+                if evidence_id in priorities
+            }
+        )
+    )
 
 
 def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
@@ -191,6 +212,7 @@ def _explanation(
         memory_change_percent=(
             result.memory_change_percent if result is not None else None
         ),
+        plan_priorities=_plan_priorities(candidate, request),
     )
 
 
@@ -737,6 +759,7 @@ def optimize(
                                         changed_paths=changed_paths,
                                         correctness_passed=False,
                                     ),
+                                    plan_priorities=_plan_priorities(candidate, request),
                                 )
                                 evaluations.append(evaluation)
                                 stage_evaluations.append(evaluation)
@@ -800,6 +823,7 @@ def optimize(
                                 result=result,
                                 attribution=attribution,
                             ),
+                            plan_priorities=_plan_priorities(candidate, request),
                         )
                         evaluations.append(evaluation)
                         stage_evaluations.append(evaluation)
@@ -831,6 +855,7 @@ def optimize(
                             reason=reason,
                             changed_paths=(),
                         ),
+                        plan_priorities=_plan_priorities(candidate, request),
                     )
                     evaluations.append(evaluation)
                     stage_evaluations.append(evaluation)
@@ -997,7 +1022,7 @@ def optimize(
                     policy=selected_policy,
                 )
     return OptimizationRun(
-        schema_version=8,
+        schema_version=9,
         run_id=f"opt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}",
         created_at=datetime.now(UTC).isoformat(),
         baseline_commit=commit,
