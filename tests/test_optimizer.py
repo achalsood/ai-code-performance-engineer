@@ -15,6 +15,7 @@ from perf_engineer.optimizer import (
 from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import (
     OptimizationCandidate,
+    OptimizationPlanRelation,
     OptimizationPlanStep,
     OptimizationRequest,
 )
@@ -78,6 +79,44 @@ def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots(
     assert "near measured hotspot hot.py:12 work" in plan[0].rationale
     assert plan[0].expected_strategy == "hoist allocation"
     assert plan[2].expected_strategy == "reduce measured hot-path work"
+
+
+
+
+def test_state_transition_relations_learn_subsumes_and_enables() -> None:
+    import perf_engineer.optimizer as optimizer
+
+    previous = (
+        OptimizationPlanStep(1, "finding:TARGET:a.py:1", "target", "optimize"),
+        OptimizationPlanStep(2, "finding:OLD:a.py:2", "old", "optimize"),
+    )
+    current = (
+        OptimizationPlanStep(1, "finding:NEW:a.py:3", "new", "optimize"),
+    )
+
+    relations = optimizer._state_transition_relations(
+        previous,
+        current,
+        ("finding:TARGET:a.py:1",),
+    )
+
+    assert relations == (
+        OptimizationPlanRelation(
+            "subsumes",
+            ("finding:TARGET:a.py:1",),
+            "finding:OLD:a.py:2",
+            (
+                "Evidence disappeared after promoting the source optimization "
+                "without being directly targeted."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "enables",
+            ("finding:TARGET:a.py:1",),
+            "finding:NEW:a.py:3",
+            "Evidence appeared only after promoting the source optimization.",
+        ),
+    )
 
 
 
@@ -1046,7 +1085,7 @@ def test_optimizer_selects_verified_callable_speedup(tmp_path: Path) -> None:
     assert explanation.baseline_wall_seconds is not None
     assert explanation.candidate_wall_seconds is not None
     assert "ACCEPT:" in explanation.summary
-    assert result.schema_version == 9
+    assert result.schema_version == 10
 
 
 @pytest.mark.performance
