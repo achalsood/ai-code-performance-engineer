@@ -85,6 +85,8 @@ class OptimizationStage:
     changed_paths: tuple[str, ...]
     promotion_reason: str = ""
     alternatives_considered: tuple[str, ...] = ()
+    plan_priorities: tuple[int, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
 
 
 def _percent_change(baseline: float, candidate_value: float) -> float:
@@ -917,6 +919,8 @@ def optimize(
                     changed_paths=selected.changed_paths,
                     promotion_reason=promotion_reason,
                     alternatives_considered=ranked_alternatives,
+                    plan_priorities=selected.plan_priorities,
+                    evidence_ids=selected.candidate.target_evidence_ids,
                 )
             )
             if audit_logger:
