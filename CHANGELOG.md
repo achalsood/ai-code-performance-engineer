@@ -9,12 +9,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Explicit bounded optimization plans rank repository evidence before candidate generation, correlate nearby static findings with measured hotspots, and rebuild after every promoted state.
 - Candidate evaluations and promoted stages now preserve plan-priority and evidence provenance, and run explanations surface the planned objectives completed by promoted stages.
+- Optimization planning now learns `enables` and `subsumes` relationships from promoted-state evidence transitions and correctness-backed `conflicts` between incompatible accepted alternatives.
+- Learned relationships are fed into later provider requests; enabled evidence is prioritized and evidence conflicting with already-promoted work is suppressed from future plans.
 
 - Stage records now preserve accepted alternatives and the deterministic promotion rationale; run records summarize the complete promoted sequence and final original-to-optimized verification.
 
 - Optimization records now include structured per-candidate explanations with target evidence, strategy, changed paths, correctness, decision rationale, confidence, wall-time measurements, speedup confidence intervals, and CPU/memory deltas.
 - Correctness failures and invalid candidates retain explanations even when performance measurement is intentionally skipped.
-- Optimization record schema is now version 9 to include explanation and optimization-plan provenance.
+- Optimization record schema is now version 10 to include explanation, optimization-plan provenance, and learned plan relationships.
 
 ### Changed
 
