@@ -201,6 +201,9 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
     assert result.provider_attempts == 2
     assert [request.attempt_number for request in provider.requests] == [1, 1]
+    assert provider.requests[0].plan
+    assert provider.requests[1].plan
+    assert provider.requests[0].files["workload.py"] != provider.requests[1].files["workload.py"]
     assert [item.status for item in result.evaluations] == ["accept", "accept"]
     second_result = result.evaluations[1].result
     assert second_result is not None
