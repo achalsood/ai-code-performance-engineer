@@ -16,7 +16,6 @@ from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
 
-
 class FixedProvider:
     def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
         assert request.language == "python"
