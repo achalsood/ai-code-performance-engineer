@@ -120,6 +120,107 @@ def test_state_transition_relations_learn_subsumes_and_enables() -> None:
 
 
 
+
+def test_candidate_conflicts_are_learned_from_incompatible_accepted_states(
+    tmp_path: Path,
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.execution import ExecutionPolicy, LocalProcessRunner
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+    commit = subprocess.check_output(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+    left_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+    right_patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1 +1 @@
+-value = 1
++value = 3
+"""
+    benchmark = BenchmarkResult(("bench",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0)
+    accepted = VerificationResult(
+        Decision.ACCEPT, 10.0, True, True, "accepted", benchmark, benchmark
+    )
+    evaluations = (
+        optimizer.CandidateEvaluation(
+            OptimizationCandidate(
+                "left",
+                "Left",
+                "Left",
+                left_patch,
+                target_evidence_ids=("finding:LEFT:workload.py:1",),
+            ),
+            "accept",
+            accepted,
+            None,
+            ("workload.py",),
+        ),
+        optimizer.CandidateEvaluation(
+            OptimizationCandidate(
+                "right",
+                "Right",
+                "Right",
+                right_patch,
+                target_evidence_ids=("finding:RIGHT:workload.py:1",),
+            ),
+            "accept",
+            accepted,
+            None,
+            ("workload.py",),
+        ),
+    )
+
+    relations = optimizer._candidate_conflict_relations(
+        repository=repository,
+        commit=commit,
+        accepted_sequence=(),
+        evaluations=evaluations,
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        runner=LocalProcessRunner(),
+        policy=ExecutionPolicy(),
+    )
+
+    assert relations == (
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:LEFT:workload.py:1",),
+            "finding:RIGHT:workload.py:1",
+            (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            ),
+        ),
+        OptimizationPlanRelation(
+            "conflicts",
+            ("finding:RIGHT:workload.py:1",),
+            "finding:LEFT:workload.py:1",
+            (
+                "Individually accepted alternatives could not be composed in either order "
+                "while preserving correctness."
+            ),
+        ),
+    )
+
+
+
 def test_candidate_plan_priorities_follow_targeted_evidence() -> None:
     import perf_engineer.optimizer as optimizer
 
