@@ -257,13 +257,29 @@ def _run_explanation(
         )
 
     promoted = " -> ".join(stage.candidate_id for stage in stages)
+    planned_objectives = "; ".join(
+        (
+            f"stage {stage.stage_number}: plan priorities "
+            f"{','.join(str(priority) for priority in stage.plan_priorities)} "
+            f"via {','.join(stage.evidence_ids)}"
+        )
+        for stage in stages
+        if stage.plan_priorities or stage.evidence_ids
+    )
+    provenance_summary = (
+        f" Planned objectives: {planned_objectives}."
+        if planned_objectives
+        else ""
+    )
     if final_verification is None:
         return (
-            f"Promoted {len(stages)} stage(s): {promoted}. "
+            f"Promoted {len(stages)} stage(s): {promoted}."
+            f"{provenance_summary} "
             "Final original-to-optimized verification is unavailable."
         )
     return (
-        f"Promoted {len(stages)} stage(s): {promoted}. Final verification "
+        f"Promoted {len(stages)} stage(s): {promoted}."
+        f"{provenance_summary} Final verification "
         f"{final_verification.decision.value}: "
         f"{final_verification.speedup_percent:.2f}% speedup "
         f"(95% CI {final_verification.speedup_ci95_low:.2f}% to "
