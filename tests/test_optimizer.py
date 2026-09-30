@@ -400,6 +400,8 @@ def test_promoted_stage_records_plan_step_provenance(
 
     assert result.stages[0].plan_priorities == (1,)
     assert result.stages[0].evidence_ids == ("finding:PERF002:workload.py:3",)
+    assert "Planned objectives: stage 1: plan priorities 1" in result.explanation
+    assert "finding:PERF002:workload.py:3" in result.explanation
 
 
 
