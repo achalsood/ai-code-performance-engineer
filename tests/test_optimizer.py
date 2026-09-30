@@ -79,6 +79,34 @@ class RefiningProvider:
         ]
 
 
+
+
+def test_optimization_plan_is_capped_and_deterministic() -> None:
+    findings = tuple(
+        Finding(
+            f"PERF{index:03d}",
+            f"file{index:02d}.py",
+            index,
+            "medium",
+            f"finding {index}",
+            f"strategy {index}",
+        )
+        for index in range(1, 13)
+    )
+
+    first = _optimization_plan(findings, ())
+    second = _optimization_plan(findings, ())
+
+    assert first == second
+    assert len(first) == 10
+    assert [step.priority for step in first] == list(range(1, 11))
+    assert [step.evidence_id for step in first] == [
+        f"finding:PERF{index:03d}:file{index:02d}.py:{index}"
+        for index in range(1, 11)
+    ]
+
+
+
 def test_ranks_verified_candidate_and_cleans_worktrees(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
