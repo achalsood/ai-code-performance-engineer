@@ -16,10 +16,10 @@ from perf_engineer.profiling import Hotspot
 from perf_engineer.providers import OptimizationCandidate, OptimizationRequest
 
 
-def test_optimization_plan_prioritizes_hotspots_then_findings() -> None:
+def test_optimization_plan_prioritizes_measured_findings_and_unmatched_hotspots() -> None:
     findings = (
-        Finding("PERF002", "b.py", 8, "medium", "allocation", "hoist allocation"),
-        Finding("PERF001", "a.py", 3, "high", "repeated work", "cache result"),
+        Finding("PERF002", "hot.py", 10, "medium", "allocation", "hoist allocation"),
+        Finding("PERF001", "cold.py", 3, "high", "repeated work", "cache result"),
     )
     hotspots = (
         Hotspot("work", "hot.py", 12, 7, 0.5, 2.5),
@@ -28,55 +28,15 @@ def test_optimization_plan_prioritizes_hotspots_then_findings() -> None:
 
     plan = _optimization_plan(findings, hotspots)
 
-    assert [step.priority for step in plan] == [1, 2, 3, 4]
+    assert [step.priority for step in plan] == [1, 2, 3]
     assert [step.evidence_id for step in plan] == [
-        "hotspot:hot.py:12:work",
+        "finding:PERF002:hot.py:10",
+        "finding:PERF001:cold.py:3",
         "hotspot:other.py:4:parse",
-        "finding:PERF002:b.py:8",
-        "finding:PERF001:a.py:3",
     ]
-    assert plan[0].expected_strategy == "reduce measured hot-path work"
-    assert plan[2].expected_strategy == "hoist allocation"
-
-
-
-class FixedProvider:
-    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
-        assert request.language == "python"
-        patch = """diff --git a/workload.py b/workload.py
---- a/workload.py
-+++ b/workload.py
-@@ -1,2 +1,2 @@
- import time
--time.sleep(0.10)
-+time.sleep(0.01)
-"""
-        return [OptimizationCandidate("fast", "Reduce wait", "Removes idle time", patch)]
-
-
-class RefiningProvider:
-    def __init__(self) -> None:
-        self.requests: list[OptimizationRequest] = []
-
-    def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
-        self.requests.append(request)
-        if request.attempt_number == 1:
-            return [OptimizationCandidate("bad", "Invalid", "First attempt", "not a diff")]
-        patch = """diff --git a/workload.py b/workload.py
---- a/workload.py
-+++ b/workload.py
-@@ -1,2 +1,2 @@
- import time
--time.sleep(0.10)
-+time.sleep(0.01)
-"""
-        return [
-            OptimizationCandidate(
-                "fast", "Reduce wait", "Uses feedback", patch, "repeated-work", "90%", "low"
-            )
-        ]
-
-
+    assert "near measured hotspot hot.py:12 work" in plan[0].rationale
+    assert plan[0].expected_strategy == "hoist allocation"
+    assert plan[2].expected_strategy == "reduce measured hot-path work"
 
 
 def test_optimization_plan_is_capped_and_deterministic() -> None:
