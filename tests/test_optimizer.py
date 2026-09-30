@@ -256,6 +256,96 @@ def test_optimizer_regenerates_candidates_after_promoting_stage(tmp_path: Path) 
 
 
 
+
+
+def test_optimizer_replans_when_promoted_state_changes_analyzer_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import perf_engineer.optimizer as optimizer
+    from perf_engineer.models import BenchmarkResult, Decision, VerificationResult
+
+    repository = tmp_path / "repository"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+    (repository / "workload.py").write_text(
+        "values = list(range(10))\n"
+        "for item in items:\n"
+        "    consume(list(values))\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "baseline"], check=True)
+
+    class ReplanningProvider:
+        def __init__(self) -> None:
+            self.requests: list[OptimizationRequest] = []
+
+        def generate(self, request: OptimizationRequest) -> list[OptimizationCandidate]:
+            self.requests.append(request)
+            source = request.files["workload.py"]
+            if "consume(list(values))" in source:
+                patch = """diff --git a/workload.py b/workload.py
+--- a/workload.py
++++ b/workload.py
+@@ -1,3 +1,4 @@
+ values = list(range(10))
++cached_values = list(values)
+ for item in items:
+-    consume(list(values))
++    consume(cached_values)
+"""
+                return [OptimizationCandidate("hoist", "Hoist", "Hoist allocation", patch)]
+            return []
+
+    baseline = BenchmarkResult(
+        ("benchmark",), (1.0,), 1.0, 1.0, 0.0, 1.0, 1.0
+    )
+    candidate = BenchmarkResult(
+        ("benchmark",), (0.5,), 0.5, 0.5, 0.0, 0.5, 0.5
+    )
+    accepted = VerificationResult(
+        Decision.ACCEPT,
+        50.0,
+        True,
+        True,
+        "accepted",
+        baseline,
+        candidate,
+        40.0,
+        60.0,
+    )
+    monkeypatch.setattr(
+        optimizer,
+        "run_adaptive_paired_benchmarks",
+        lambda *args, **kwargs: (baseline, candidate),
+    )
+    monkeypatch.setattr(optimizer, "run_correctness", lambda *args, **kwargs: True)
+    monkeypatch.setattr(optimizer, "compare", lambda *args, **kwargs: accepted)
+
+    provider = ReplanningProvider()
+    optimize(
+        repository=repository,
+        baseline_ref="HEAD",
+        provider=provider,
+        benchmark_command=[sys.executable, "workload.py"],
+        test_command=[sys.executable, "-m", "py_compile", "workload.py"],
+        profile_guidance=False,
+        maximum_provider_attempts=1,
+        maximum_optimization_stages=2,
+    )
+
+    assert len(provider.requests) == 2
+    assert [step.evidence_id for step in provider.requests[0].plan] == [
+        "finding:PERF002:workload.py:3"
+    ]
+    assert provider.requests[1].plan == ()
+    assert "cached_values = list(values)" in provider.requests[1].files["workload.py"]
+
+
+
 def test_deduplicates_different_patches_that_produce_same_resulting_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
