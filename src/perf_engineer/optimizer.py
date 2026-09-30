@@ -223,6 +223,42 @@ def _candidate_conflict_relations(
     return tuple(relations)
 
 
+
+def _apply_plan_relations(
+    plan: tuple[OptimizationPlanStep, ...],
+    relations: tuple[OptimizationPlanRelation, ...],
+    promoted_evidence_ids: set[str],
+) -> tuple[OptimizationPlanStep, ...]:
+    if not plan or not promoted_evidence_ids:
+        return plan
+
+    blocked = {
+        relation.affected_evidence_id
+        for relation in relations
+        if relation.kind == "conflicts"
+        and promoted_evidence_ids.intersection(relation.source_evidence_ids)
+    }
+    enabled = {
+        relation.affected_evidence_id
+        for relation in relations
+        if relation.kind == "enables"
+        and promoted_evidence_ids.intersection(relation.source_evidence_ids)
+    }
+
+    surviving = [step for step in plan if step.evidence_id not in blocked]
+    surviving.sort(
+        key=lambda step: (
+            0 if step.evidence_id in enabled else 1,
+            step.priority,
+            step.evidence_id,
+        )
+    )
+    return tuple(
+        replace(step, priority=index)
+        for index, step in enumerate(surviving, start=1)
+    )
+
+
 def _evidence_label(candidate: OptimizationCandidate, request: OptimizationRequest) -> str:
     evidence: dict[str, str] = {}
     for finding in request.findings:
@@ -779,6 +815,7 @@ def optimize(
     plan_relations: list[OptimizationPlanRelation] = []
     previous_plan: tuple[OptimizationPlanStep, ...] | None = None
     previous_stage_evidence_ids: tuple[str, ...] = ()
+    promoted_evidence_ids: set[str] = set()
 
     for stage_number in range(1, maximum_optimization_stages + 1):
         stage_evaluations: list[CandidateEvaluation] = []
@@ -811,9 +848,16 @@ def optimize(
                         request.plan,
                         previous_stage_evidence_ids,
                     )
-                    plan_relations.extend(learned)
+                    plan_relations.extend(
+                        relation for relation in learned if relation not in plan_relations
+                    )
                 request = replace(
                     request,
+                    plan=_apply_plan_relations(
+                        request.plan,
+                        tuple(plan_relations),
+                        promoted_evidence_ids,
+                    ),
                     plan_relations=tuple(plan_relations),
                     attempt_number=stage_attempt,
                     feedback=_candidate_feedback(stage_evaluations),
@@ -1074,6 +1118,7 @@ def optimize(
             )
             previous_plan = request.plan
             previous_stage_evidence_ids = selected.candidate.target_evidence_ids
+            promoted_evidence_ids.update(selected.candidate.target_evidence_ids)
             if audit_logger:
                 audit_logger.append(
                     "optimization_stage_promoted",
