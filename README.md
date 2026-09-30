@@ -31,7 +31,7 @@ The central rule is simple: **AI may propose a patch; measurement decides whethe
 - Direct original-vs-final verification and reproducible unified final patch export
 - Content-addressed Git-tree optimization-state identities with stage/attempt provenance for every evaluated candidate
 - Structured per-candidate explanations covering target evidence, strategy, changed paths, correctness, measured deltas, confidence, and decision rationale
-- Explicit optimization plans that correlate measured hotspots with nearby static findings, re-plan after each promotion, and preserve candidate/stage plan provenance
+- Explicit optimization plans that correlate measured hotspots with nearby static findings, re-plan after each promotion, preserve candidate/stage plan provenance, and learn dependency relationships between optimization opportunities
 
 ## Quick start
 
@@ -174,7 +174,7 @@ stage, while promoted candidates advance the optimizer to a fresh state for the 
 
 Evaluation uses alternating AB/BA execution order to reduce temporal and thermal bias. Audit
 appends read only the final hash-chain record, keeping logging constant-time as histories grow.
-Optimization requests also carry a bounded, deterministic plan. Findings near measured hotspots are prioritized ahead of cold-code findings, unmatched hotspots remain explicit plan steps, and the plan is rebuilt after every promoted state so resolved evidence disappears from later stages. Candidate and promoted-stage records preserve the plan priorities and evidence IDs they addressed; plan priority improves provenance and guidance but never overrides measured verification or candidate ranking.
+Optimization requests also carry a bounded, deterministic plan. Findings near measured hotspots are prioritized ahead of cold-code findings, unmatched hotspots remain explicit plan steps, and the plan is rebuilt after every promoted state so resolved evidence disappears from later stages. The optimizer learns state-transition relationships from observed evidence changes: promoted work can subsume evidence that disappears without being directly targeted or enable evidence that appears only afterward. It also records conflicts when two individually accepted alternatives cannot be composed in either order while preserving correctness. Enabled evidence is prioritized in later plans, while evidence that conflicts with already-promoted work is suppressed. Candidate and promoted-stage records preserve the plan priorities and evidence IDs they addressed; these planning heuristics guide search and provenance but never override measured verification or candidate ranking.
 
 Optimization candidates receive severity-ranked findings and hotspot hints. Each patch is measured
 against a fresh baseline using alternating AB/BA trials; sampling stops when the paired effect is
