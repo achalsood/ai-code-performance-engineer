@@ -26,6 +26,14 @@ class OptimizationPlanStep:
 
 
 @dataclass(frozen=True)
+class OptimizationPlanRelation:
+    kind: str
+    source_evidence_ids: tuple[str, ...]
+    affected_evidence_id: str
+    rationale: str
+
+
+@dataclass(frozen=True)
 class OptimizationRequest:
     objective: str
     language: str
@@ -39,6 +47,7 @@ class OptimizationRequest:
     attempt_number: int = 1
     feedback: tuple[str, ...] = ()
     plan: tuple[OptimizationPlanStep, ...] = ()
+    plan_relations: tuple[OptimizationPlanRelation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,7 +114,8 @@ def _system_prompt(maximum_candidates: int) -> str:
         "candidates across applicable strategies instead of returning minor variants. "
         "Use finding IDs in the form finding:<rule_id>:<path>:<line> and hotspot IDs in the form "
         "hotspot:<file>:<line>:<function> in target_evidence_ids so each candidate states the "
-        "evidence it targets. Follow the optimization plan in priority order and use the ranked "
+        "evidence it targets. Follow the optimization plan in priority order, account for learned "
+        "plan_relations from prior promoted state transitions, and use the ranked "
         "findings and optimization_hints to target measured hot paths. Prefer algorithmic or "
         "allocation reductions over cosmetic rewrites. "
         "Each candidate "
